@@ -44,6 +44,8 @@
   #rosterArea { display: none; }
   .roster-title { text-align: center; font-size: 18px; font-weight: 700; margin-bottom: 4px; color: #2f4f8f; }
   .roster-meta { text-align: right; font-size: 12px; color: #888; margin-bottom: 10px; }
+  .roster-tab { padding: 6px 12px; border: 1px solid #d5d9e0; border-radius: 20px; background: #fff; color: #333; font-size: 13px; font-weight: 400; cursor: pointer; }
+  .roster-tab.active { background: #2f4f8f; color: #fff; border-color: #2f4f8f; font-weight: 700; }
   .sign-col { width: 90px; }
   .rosterScroll { overflow-x: auto; }
 
@@ -196,6 +198,7 @@
     <div id="rosterArea">
       <div class="roster-title" id="rosterTitle"></div>
       <div class="roster-meta" id="rosterMeta"></div>
+      <div id="rosterTabs" class="no-print" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;"></div>
       <div class="rosterScroll">
         <table>
           <thead>
@@ -537,19 +540,62 @@ function getRosterMembers() {
   return [];
 }
 
+let rosterGroups = {};      // { 투표구: [members] }
+let rosterVoteName = '';
+let currentRosterDistrict = null;
+
 function buildRoster() {
   const voteName = document.getElementById('voteName').value.trim();
   const selected = getRosterMembers();
   if (!voteName) { alert('투표명을 입력해 주세요.'); return; }
   if (selected.length === 0) { alert('연명부에 포함할 인원을 선택하시거나, 검색어/필터로 대상자를 먼저 좁혀주세요.'); return; }
 
-  document.getElementById('rosterTitle').textContent = voteName + ' 투표 연명부';
+  rosterVoteName = voteName;
+  rosterGroups = {};
+  selected.forEach(function (m) {
+    const d = m['투표구'] || '(미배정)';
+    (rosterGroups[d] = rosterGroups[d] || []).push(m);
+  });
+
+  const districtKeys = Object.keys(rosterGroups).sort(function (a, b) {
+    return String(a).localeCompare(String(b), 'ko', { numeric: true });
+  });
+
+  // 투표구가 2개 이상이면 클릭해서 골라볼 수 있는 탭을 보여줌
+  const tabsEl = document.getElementById('rosterTabs');
+  if (districtKeys.length > 1) {
+    tabsEl.innerHTML = districtKeys.map(function (d) {
+      return '<button type="button" class="roster-tab" data-d="' + escapeHtml(d) + '" ' +
+        'onclick="showRosterDistrict(\'' + d.replace(/'/g, "\\'") + '\')">' +
+        escapeHtml(d) + '투표구 (' + rosterGroups[d].length + '명)</button>';
+    }).join('');
+  } else {
+    tabsEl.innerHTML = '';
+  }
+
+  showRosterDistrict(districtKeys[0]);
+  document.getElementById('rosterArea').style.display = 'block';
+  document.getElementById('rosterArea').scrollIntoView({ behavior: 'smooth' });
+}
+
+function showRosterDistrict(district) {
+  currentRosterDistrict = district;
+  const members = rosterGroups[district] || [];
+
+  // 탭 활성 표시
+  document.querySelectorAll('#rosterTabs .roster-tab').forEach(function (btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-d') === String(district));
+  });
+
+  const districtCount = Object.keys(rosterGroups).length;
+  document.getElementById('rosterTitle').textContent =
+    rosterVoteName + ' 투표 연명부' + (districtCount > 1 ? ' — ' + district + '투표구' : '');
   document.getElementById('rosterMeta').textContent =
-    '생성일: ' + new Date().toLocaleDateString('ko-KR') + '   /   총 인원: ' + selected.length + '명';
+    '생성일: ' + new Date().toLocaleDateString('ko-KR') + '   /   총 인원: ' + members.length + '명';
 
   const body = document.getElementById('rosterBody');
   const rows = [];
-  selected.forEach(function (m, idx) {
+  members.forEach(function (m, idx) {
     rows.push(
       '<tr>' +
       '<td>' + (idx + 1) + '</td>' +
@@ -568,8 +614,6 @@ function buildRoster() {
     );
   });
   body.innerHTML = rows.join('');
-  document.getElementById('rosterArea').style.display = 'block';
-  document.getElementById('rosterArea').scrollIntoView({ behavior: 'smooth' });
 }
 
 function printRoster() { window.print(); }
@@ -593,14 +637,18 @@ function rosterToSheetRows(members) {
   });
 }
 
+function getCurrentRosterMembers() {
+  return rosterGroups[currentRosterDistrict] || [];
+}
+
 function downloadExcel() {
-  const voteName = document.getElementById('voteName').value.trim() || '연명부';
-  const selected = getRosterMembers();
+  const voteName = rosterVoteName || document.getElementById('voteName').value.trim() || '연명부';
+  const selected = getCurrentRosterMembers();
   if (selected.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
 
-  // 지금 대상이 전부 같은 투표구면, "투표구_N/" 폴더 안에 저장되도록 경로를 붙임
-  const districts = new Set(selected.map(function (m) { return m['투표구']; }));
-  const folder = (districts.size === 1) ? ('투표구_' + [...districts][0] + '/') : '';
+  const districtLabel = currentRosterDistrict;
+  const folder = '투표구_' + districtLabel + '/';
+  const filename = folder + voteName + '_투표구' + districtLabel + '_연명부.xlsx';
 
   const data = rosterToSheetRows(selected);
   const ws = XLSX.utils.json_to_sheet(data, {
@@ -608,7 +656,7 @@ function downloadExcel() {
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '연명부');
-  XLSX.writeFile(wb, folder + voteName + '_연명부.xlsx');
+  XLSX.writeFile(wb, filename);
 }
 
 /* ===================== 투표구별 일괄 엑셀 (폴더별로 한번에) ===================== */
@@ -646,8 +694,8 @@ function bulkGenerateByDistrict() {
 
 /* ===================== 투표 이력 저장 (GitHub 커밋) ===================== */
 async function saveHistory() {
-  const voteName = document.getElementById('voteName').value.trim();
-  const selected = getSelectedMembers();
+  const voteName = rosterVoteName || document.getElementById('voteName').value.trim();
+  const selected = getCurrentRosterMembers();
   if (!voteName || selected.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
 
   const btn = document.getElementById('historyBtn');
@@ -657,7 +705,7 @@ async function saveHistory() {
     const cur = await ghGetJsonWithSha('data/history.json');
     const history = cur.data || [];
     history.push({
-      voteName: voteName,
+      voteName: voteName + (Object.keys(rosterGroups).length > 1 ? ' (투표구 ' + currentRosterDistrict + ')' : ''),
       count: selected.length,
       names: selected.map(function (m) { return m['성명']; }).join(', '),
       savedAt: new Date().toISOString()
