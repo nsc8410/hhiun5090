@@ -133,8 +133,12 @@
   <div class="panel no-print" id="adminPanel">
     <div class="controls">
       <div>
-        <div style="font-size:13px; margin-bottom:6px; color:#444;">① 엑셀로 명단 전체 교체 (헤더에 사업본부/부서/과/직위/사번/성명/근무지/재직구분/투표장소/투표구 포함 필요)</div>
+        <div style="font-size:13px; margin-bottom:6px; color:#444;">① 엑셀로 명단 반영 (헤더에 사업본부/부서/과/직위/사번/성명/근무지/재직구분/투표장소/투표구 포함 필요)</div>
         <input type="file" id="excelUploadInput" accept=".xlsx,.xls">
+        <div style="margin:8px 0; font-size:13px;">
+          <label style="margin-right:14px;"><input type="radio" name="uploadMode" value="merge" checked> 추가/병합 (사번 같으면 갱신, 다르면 새로 추가 — 기존 인원 유지)</label>
+          <label><input type="radio" name="uploadMode" value="replace"> 전체 교체 (기존 인원 전부 삭제 후 이 파일 내용으로 교체)</label>
+        </div>
         <button class="secondary" id="excelUploadBtn" onclick="handleExcelUpload()">업로드 및 저장소에 반영</button>
       </div>
     </div>
@@ -667,11 +671,12 @@ async function saveHistory() {
   }
 }
 
-/* ===================== 엑셀 업로드 (명단 전체 교체) ===================== */
+/* ===================== 엑셀 업로드 (추가/병합 또는 전체 교체) ===================== */
 async function handleExcelUpload() {
   const input = document.getElementById('excelUploadInput');
   const file = input.files[0];
   if (!file) { alert('엑셀 파일을 선택해 주세요.'); return; }
+  const mode = document.querySelector('input[name="uploadMode"]:checked').value; // 'merge' | 'replace'
 
   const btn = document.getElementById('excelUploadBtn');
   btn.disabled = true; btn.textContent = '처리 중...';
@@ -691,27 +696,63 @@ async function handleExcelUpload() {
       throw new Error('엑셀 1행에 다음 헤더가 없습니다: ' + missing.join(', '));
     }
 
-    const newMembers = [];
-    let id = 1;
+    const uploadedRows = [];
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r];
       const name = row[colIndex['성명']];
       if (!name) continue;
-      const obj = { id: id++ };
+      const obj = {};
       FIELDS.forEach(function (f) {
         obj[f] = colIndex[f] !== undefined ? String(row[colIndex[f]] || '').trim() : '';
       });
-      newMembers.push(obj);
+      uploadedRows.push(obj);
     }
 
-    if (!confirm('현재 저장소 명단을 이 엑셀 내용(' + newMembers.length + '명)으로 완전히 덮어씁니다. 계속할까요?')) {
-      btn.disabled = false; btn.textContent = '업로드 및 저장소에 반영';
-      return;
+    let finalMembers, summary;
+
+    if (mode === 'replace') {
+      if (!confirm('저장소 명단을 이 엑셀 내용(' + uploadedRows.length + '명)으로 완전히 덮어씁니다. 기존에 있던 사람은 이 파일에 없으면 전부 사라집니다. 계속할까요?')) {
+        btn.disabled = false; btn.textContent = '업로드 및 저장소에 반영';
+        return;
+      }
+      finalMembers = uploadedRows.map(function (m, i) { m.id = i + 1; return m; });
+      summary = '명단 전체 교체 (' + finalMembers.length + '명)';
+    } else {
+      // 추가/병합: 사번이 같으면 정보 갱신, 없으면 신규 추가. 업로드 파일에 없는 기존 사람은 그대로 유지.
+      const byEmpid = {};
+      allMembers.forEach(function (m) { if (m['사번']) byEmpid[m['사번']] = m; });
+      let nextId = allMembers.reduce(function (mx, m) { return Math.max(mx, m.id || 0); }, 0) + 1;
+      let updated = 0, added = 0;
+
+      uploadedRows.forEach(function (u) {
+        const empid = u['사번'];
+        const existing = empid ? byEmpid[empid] : null;
+        if (existing) {
+          FIELDS.forEach(function (f) {
+            if (f === '노조구분') return; // 업로드 엑셀엔 없는 칸이므로 기존 값을 그대로 유지
+            existing[f] = u[f];
+          });
+          updated++;
+        } else {
+          u.id = nextId++;
+          if (u['노조구분'] === undefined) u['노조구분'] = '';
+          allMembers.push(u);
+          if (empid) byEmpid[empid] = u;
+          added++;
+        }
+      });
+
+      finalMembers = allMembers;
+      summary = '추가/병합: 기존 정보 갱신 ' + updated + '명, 신규 추가 ' + added + '명 (전체 ' + finalMembers.length + '명)';
+      if (!confirm(summary + '\n저장소에 반영할까요?')) {
+        btn.disabled = false; btn.textContent = '업로드 및 저장소에 반영';
+        return;
+      }
     }
 
-    await ghPutJsonSafe('data/members.json', newMembers, '조합원 명단 갱신 (' + newMembers.length + '명)');
+    await ghPutJsonSafe('data/members.json', finalMembers, summary);
 
-    allMembers = newMembers;
+    allMembers = finalMembers;
     selectedIds = {};
     ['unionFilter','locationFilter','districtFilter']
       .forEach(function (id) {
@@ -721,7 +762,7 @@ async function handleExcelUpload() {
     buildFilterOptions();
     showAllForced = false;
     renderMembers();
-    showGlobalOk('명단이 갱신되어 저장소에 커밋되었습니다. (' + newMembers.length + '명)');
+    showGlobalOk(summary + ' — 저장소에 커밋되었습니다.');
   } catch (err) {
     showGlobalError(err.message);
   } finally {
