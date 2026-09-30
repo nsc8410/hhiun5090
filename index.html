@@ -156,7 +156,6 @@
   <div class="panel no-print">
     <div class="controls">
       <input type="text" id="searchBox" placeholder="성명 검색" oninput="renderMembers()">
-      <select id="unionFilter" onchange="renderMembers()"><option value="">전체 (구분 없음 포함)</option></select>
       <select id="locationFilter" onchange="renderMembers()"><option value="">전체 투표장소</option></select>
       <select id="districtFilter" onchange="renderMembers()"><option value="">전체 투표구</option></select>
     </div>
@@ -173,10 +172,10 @@
           <tr>
             <th style="width:36px;"></th>
             <th>성명</th><th>사업본부</th><th>부서</th><th>과</th><th>직위</th><th>사번</th>
-            <th>근무지</th><th>재직구분</th><th>투표장소</th><th>투표구</th><th>노조구분</th>
+            <th>근무지</th><th>재직구분</th><th>투표장소</th><th>투표구</th>
           </tr>
         </thead>
-        <tbody id="memberBody"><tr><td colspan="12" class="loading">명단을 불러오는 중...</td></tr></tbody>
+        <tbody id="memberBody"><tr><td colspan="11" class="loading">명단을 불러오는 중...</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -203,8 +202,8 @@
         <table>
           <thead>
             <tr>
-              <th style="width:50px;">번호</th><th>성명</th><th>사업본부</th><th>부서</th><th>과</th><th>직위</th>
-              <th>근무지</th><th>재직구분</th><th>투표장소</th><th>투표구</th><th>노조구분</th><th class="sign-col">서명</th>
+              <th style="width:70px;">사번</th><th>성명</th><th>사업본부</th><th>부서</th><th>과</th><th>직위</th>
+              <th>근무지</th><th>재직구분</th><th>투표장소</th><th>투표구</th><th class="sign-col">서명</th>
             </tr>
           </thead>
           <tbody id="rosterBody"></tbody>
@@ -371,14 +370,24 @@ async function ghPutJsonSafe(path, obj, message) {
 
 /* ===================== 앱 상태 ===================== */
 let allMembers = [];
+
+// 부서명 기준으로 정렬 (같은 부서 안에서는 성명순)
+function sortMembersByDept(list) {
+  list.sort(function (a, b) {
+    const d = String(a['부서'] || '').localeCompare(String(b['부서'] || ''), 'ko', { numeric: true });
+    if (d !== 0) return d;
+    return String(a['성명'] || '').localeCompare(String(b['성명'] || ''), 'ko');
+  });
+  return list;
+}
 let selectedIds = {};
 let showAllForced = false;
 
-const FIELDS = ['사업본부','부서','과','직위','사번','성명','근무지','재직구분','투표장소','투표구','노조구분'];
+const FIELDS = ['사업본부','부서','과','직위','사번','성명','근무지','재직구분','투표장소','투표구'];
 const REQUIRED_UPLOAD_FIELDS = ['사업본부','부서','과','직위','사번','성명','근무지','재직구분','투표장소','투표구'];
-const FILTER_FIELDS = ['노조구분','투표장소','투표구'];
+const FILTER_FIELDS = ['투표장소','투표구'];
 const FILTER_SELECT_IDS = {
-  '노조구분':'unionFilter','투표장소':'locationFilter','투표구':'districtFilter'
+  '투표장소':'locationFilter','투표구':'districtFilter'
 };
 
 window.onload = function () {
@@ -397,16 +406,17 @@ async function startApp() {
   try {
     showGlobalError('');
     document.getElementById('memberBody').innerHTML =
-      '<tr><td colspan="12" class="loading"><span class="spinner"></span>GitHub에서 명단을 불러오는 중...</td></tr>';
+      '<tr><td colspan="11" class="loading"><span class="spinner"></span>GitHub에서 명단을 불러오는 중...</td></tr>';
 
     const text = await ghGetRaw('data/members.json');
     allMembers = JSON.parse(text);
+    sortMembersByDept(allMembers);
 
     buildFilterOptions();
     renderMembers();
   } catch (err) {
     showGlobalError(err.message + '\n\n(저장소에 data/members.json 파일이 있는지, 토큰 권한이 맞는지 확인해 주세요.)');
-    document.getElementById('memberBody').innerHTML = '<tr><td colspan="12" class="loading">불러오기 실패</td></tr>';
+    document.getElementById('memberBody').innerHTML = '<tr><td colspan="11" class="loading">불러오기 실패</td></tr>';
   }
 }
 
@@ -471,7 +481,7 @@ function renderMembers() {
 
   if (!hasActiveFilter() && !showAllForced) {
     body.innerHTML =
-      '<tr><td colspan="12"><div class="hint-box">전체 ' + allMembers.length + '명입니다. ' +
+      '<tr><td colspan="11"><div class="hint-box">전체 ' + allMembers.length + '명입니다. ' +
       '검색어를 입력하거나 위 필터를 선택해 인원을 좁혀보세요.<br>' +
       '(전체 인원을 다 보시려면 "전체 인원 표시" 버튼을 눌러주세요.)</div></td></tr>';
     updateSelCount();
@@ -480,7 +490,7 @@ function renderMembers() {
 
   const list = filteredMembers();
   if (list.length === 0) {
-    body.innerHTML = '<tr><td colspan="12" class="loading">조건에 맞는 조합원이 없습니다.</td></tr>';
+    body.innerHTML = '<tr><td colspan="11" class="loading">조건에 맞는 조합원이 없습니다.</td></tr>';
     updateSelCount();
     return;
   }
@@ -501,7 +511,6 @@ function renderMembers() {
       '<td>' + escapeHtml(m['재직구분']) + '</td>' +
       '<td>' + escapeHtml(m['투표장소']) + '</td>' +
       '<td>' + escapeHtml(m['투표구']) + '</td>' +
-      '<td>' + escapeHtml(m['노조구분']) + '</td>' +
       '</tr>'
     );
   });
@@ -598,7 +607,7 @@ function showRosterDistrict(district) {
   members.forEach(function (m, idx) {
     rows.push(
       '<tr>' +
-      '<td>' + (idx + 1) + '</td>' +
+      '<td>' + escapeHtml(m['사번']) + '</td>' +
       '<td>' + escapeHtml(m['성명']) + '</td>' +
       '<td>' + escapeHtml(m['사업본부']) + '</td>' +
       '<td>' + escapeHtml(m['부서']) + '</td>' +
@@ -608,7 +617,6 @@ function showRosterDistrict(district) {
       '<td>' + escapeHtml(m['재직구분']) + '</td>' +
       '<td>' + escapeHtml(m['투표장소']) + '</td>' +
       '<td>' + escapeHtml(m['투표구']) + '</td>' +
-      '<td>' + escapeHtml(m['노조구분']) + '</td>' +
       '<td class="sign-col"></td>' +
       '</tr>'
     );
@@ -619,9 +627,9 @@ function showRosterDistrict(district) {
 function printRoster() { window.print(); }
 
 function rosterToSheetRows(members) {
-  return members.map(function (m, idx) {
+  return members.map(function (m) {
     return {
-      '번호': idx + 1,
+      '사번': m['사번'] || '',
       '성명': m['성명'] || '',
       '사업본부': m['사업본부'] || '',
       '부서': m['부서'] || '',
@@ -631,7 +639,6 @@ function rosterToSheetRows(members) {
       '재직구분': m['재직구분'] || '',
       '투표장소': m['투표장소'] || '',
       '투표구': m['투표구'] || '',
-      '노조구분': m['노조구분'] || '',
       '서명': ''
     };
   });
@@ -652,7 +659,7 @@ function downloadExcel() {
 
   const data = rosterToSheetRows(selected);
   const ws = XLSX.utils.json_to_sheet(data, {
-    header: ['번호','성명','사업본부','부서','과','직위','근무지','재직구분','투표장소','투표구','노조구분','서명']
+    header: ['사번','성명','사업본부','부서','과','직위','근무지','재직구분','투표장소','투표구','서명']
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '연명부');
@@ -682,7 +689,7 @@ function bulkGenerateByDistrict() {
   districtKeys.forEach(function (d) {
     const data = rosterToSheetRows(groups[d]);
     const ws = XLSX.utils.json_to_sheet(data, {
-      header: ['번호','성명','사업본부','부서','과','직위','근무지','재직구분','투표장소','투표구','노조구분','서명']
+      header: ['사번','성명','사업본부','부서','과','직위','근무지','재직구분','투표장소','투표구','서명']
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '연명부');
@@ -776,14 +783,10 @@ async function handleExcelUpload() {
         const empid = u['사번'];
         const existing = empid ? byEmpid[empid] : null;
         if (existing) {
-          FIELDS.forEach(function (f) {
-            if (f === '노조구분') return; // 업로드 엑셀엔 없는 칸이므로 기존 값을 그대로 유지
-            existing[f] = u[f];
-          });
+          FIELDS.forEach(function (f) { existing[f] = u[f]; });
           updated++;
         } else {
           u.id = nextId++;
-          if (u['노조구분'] === undefined) u['노조구분'] = '';
           allMembers.push(u);
           if (empid) byEmpid[empid] = u;
           added++;
@@ -800,9 +803,9 @@ async function handleExcelUpload() {
 
     await ghPutJsonSafe('data/members.json', finalMembers, summary);
 
-    allMembers = finalMembers;
+    allMembers = sortMembersByDept(finalMembers);
     selectedIds = {};
-    ['unionFilter','locationFilter','districtFilter']
+    ['locationFilter','districtFilter']
       .forEach(function (id) {
         const sel = document.getElementById(id);
         sel.innerHTML = sel.options[0].outerHTML;
