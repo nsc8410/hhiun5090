@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>조합원 투표 연명부</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -151,6 +150,7 @@
   <div class="panel no-print">
     <div class="controls">
       <input type="text" id="searchBox" placeholder="성명 검색" oninput="renderMembers()">
+      <select id="unionFilter" onchange="renderMembers()"><option value="">전체 (구분 없음 포함)</option></select>
       <select id="locationFilter" onchange="renderMembers()"><option value="">전체 투표장소</option></select>
       <select id="districtFilter" onchange="renderMembers()"><option value="">전체 투표구</option></select>
     </div>
@@ -167,10 +167,10 @@
           <tr>
             <th style="width:36px;"></th>
             <th>성명</th><th>사업본부</th><th>부서</th><th>과</th><th>직위</th><th>사번</th>
-            <th>근무지</th><th>재직구분</th><th>투표장소</th><th>투표구</th>
+            <th>근무지</th><th>재직구분</th><th>투표장소</th><th>투표구</th><th>노조구분</th>
           </tr>
         </thead>
-        <tbody id="memberBody"><tr><td colspan="11" class="loading">명단을 불러오는 중...</td></tr></tbody>
+        <tbody id="memberBody"><tr><td colspan="12" class="loading">명단을 불러오는 중...</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -180,10 +180,10 @@
     <div class="controls">
       <input type="text" id="voteName" placeholder="투표명 (예: 2026년 의견일치안 찬반투표)">
       <button onclick="buildRoster()">연명부 생성</button>
-      <button class="secondary" id="bulkPdfBtn" onclick="bulkGenerateByDistrict()">투표구별 일괄 PDF (폴더별)</button>
+      <button class="secondary" id="bulkExcelBtn" onclick="bulkGenerateByDistrict()">투표구별 일괄 엑셀 (폴더별)</button>
     </div>
     <div class="sub" style="margin-bottom:0;">
-      "투표구별 일괄 PDF"는 선택된 인원(또는 지금 필터된 인원 전체)을 투표구 번호별로 나눠서, 각각 "투표구_번호" 폴더 안에 PDF로 한 번에 저장합니다.
+      "투표구별 일괄 엑셀"은 선택된 인원(또는 지금 검색·필터된 인원)을 투표구 번호별로 나눠서, 각각 "투표구_번호" 폴더 안에 엑셀로 한 번에 저장합니다.
     </div>
   </div>
 
@@ -197,7 +197,7 @@
           <thead>
             <tr>
               <th style="width:50px;">번호</th><th>성명</th><th>사업본부</th><th>부서</th><th>과</th><th>직위</th>
-              <th>근무지</th><th>재직구분</th><th>투표장소</th><th>투표구</th><th class="sign-col">서명</th>
+              <th>근무지</th><th>재직구분</th><th>투표장소</th><th>투표구</th><th>노조구분</th><th class="sign-col">서명</th>
             </tr>
           </thead>
           <tbody id="rosterBody"></tbody>
@@ -205,7 +205,7 @@
       </div>
       <div class="actions no-print">
         <button onclick="printRoster()">인쇄하기</button>
-        <button class="ghost" id="pdfBtn" onclick="downloadPdf()">PDF 다운로드</button>
+        <button class="ghost" id="excelBtn" onclick="downloadExcel()">엑셀 다운로드</button>
         <button class="secondary" id="historyBtn" onclick="saveHistory()">이력 저장(GitHub)</button>
       </div>
     </div>
@@ -343,10 +343,11 @@ let allMembers = [];
 let selectedIds = {};
 let showAllForced = false;
 
-const FIELDS = ['사업본부','부서','과','직위','사번','성명','근무지','재직구분','투표장소','투표구'];
-const FILTER_FIELDS = ['투표장소','투표구'];
+const FIELDS = ['사업본부','부서','과','직위','사번','성명','근무지','재직구분','투표장소','투표구','노조구분'];
+const REQUIRED_UPLOAD_FIELDS = ['사업본부','부서','과','직위','사번','성명','근무지','재직구분','투표장소','투표구'];
+const FILTER_FIELDS = ['노조구분','투표장소','투표구'];
 const FILTER_SELECT_IDS = {
-  '투표장소':'locationFilter','투표구':'districtFilter'
+  '노조구분':'unionFilter','투표장소':'locationFilter','투표구':'districtFilter'
 };
 
 window.onload = function () {
@@ -365,7 +366,7 @@ async function startApp() {
   try {
     showGlobalError('');
     document.getElementById('memberBody').innerHTML =
-      '<tr><td colspan="11" class="loading"><span class="spinner"></span>GitHub에서 명단을 불러오는 중...</td></tr>';
+      '<tr><td colspan="12" class="loading"><span class="spinner"></span>GitHub에서 명단을 불러오는 중...</td></tr>';
 
     const text = await ghGetRaw('data/members.json');
     allMembers = JSON.parse(text);
@@ -374,7 +375,7 @@ async function startApp() {
     renderMembers();
   } catch (err) {
     showGlobalError(err.message + '\n\n(저장소에 data/members.json 파일이 있는지, 토큰 권한이 맞는지 확인해 주세요.)');
-    document.getElementById('memberBody').innerHTML = '<tr><td colspan="11" class="loading">불러오기 실패</td></tr>';
+    document.getElementById('memberBody').innerHTML = '<tr><td colspan="12" class="loading">불러오기 실패</td></tr>';
   }
 }
 
@@ -439,7 +440,7 @@ function renderMembers() {
 
   if (!hasActiveFilter() && !showAllForced) {
     body.innerHTML =
-      '<tr><td colspan="11"><div class="hint-box">전체 ' + allMembers.length + '명입니다. ' +
+      '<tr><td colspan="12"><div class="hint-box">전체 ' + allMembers.length + '명입니다. ' +
       '검색어를 입력하거나 위 필터를 선택해 인원을 좁혀보세요.<br>' +
       '(전체 인원을 다 보시려면 "전체 인원 표시" 버튼을 눌러주세요.)</div></td></tr>';
     updateSelCount();
@@ -448,7 +449,7 @@ function renderMembers() {
 
   const list = filteredMembers();
   if (list.length === 0) {
-    body.innerHTML = '<tr><td colspan="11" class="loading">조건에 맞는 조합원이 없습니다.</td></tr>';
+    body.innerHTML = '<tr><td colspan="12" class="loading">조건에 맞는 조합원이 없습니다.</td></tr>';
     updateSelCount();
     return;
   }
@@ -469,6 +470,7 @@ function renderMembers() {
       '<td>' + escapeHtml(m['재직구분']) + '</td>' +
       '<td>' + escapeHtml(m['투표장소']) + '</td>' +
       '<td>' + escapeHtml(m['투표구']) + '</td>' +
+      '<td>' + escapeHtml(m['노조구분']) + '</td>' +
       '</tr>'
     );
   });
@@ -497,12 +499,21 @@ function getSelectedMembers() {
   return allMembers.filter(function (m) { return selectedIds[m.id]; });
 }
 
-/* ===================== 연명부 생성 / 인쇄 / PDF ===================== */
+/* ===================== 연명부 생성 / 인쇄 / 엑셀 ===================== */
+function getRosterMembers() {
+  // 직접 체크박스로 고른 사람이 있으면 그걸 우선 사용
+  const selected = getSelectedMembers();
+  if (selected.length > 0) return selected;
+  // 아무도 체크 안 했어도, 검색어나 필터로 좁혀놨으면 그 결과를 그대로 연명부 대상으로 사용
+  if (hasActiveFilter() || showAllForced) return filteredMembers();
+  return [];
+}
+
 function buildRoster() {
   const voteName = document.getElementById('voteName').value.trim();
-  const selected = getSelectedMembers();
+  const selected = getRosterMembers();
   if (!voteName) { alert('투표명을 입력해 주세요.'); return; }
-  if (selected.length === 0) { alert('연명부에 포함할 인원을 선택해 주세요.'); return; }
+  if (selected.length === 0) { alert('연명부에 포함할 인원을 선택하시거나, 검색어/필터로 대상자를 먼저 좁혀주세요.'); return; }
 
   document.getElementById('rosterTitle').textContent = voteName + ' 투표 연명부';
   document.getElementById('rosterMeta').textContent =
@@ -523,6 +534,7 @@ function buildRoster() {
       '<td>' + escapeHtml(m['재직구분']) + '</td>' +
       '<td>' + escapeHtml(m['투표장소']) + '</td>' +
       '<td>' + escapeHtml(m['투표구']) + '</td>' +
+      '<td>' + escapeHtml(m['노조구분']) + '</td>' +
       '<td class="sign-col"></td>' +
       '</tr>'
     );
@@ -534,76 +546,53 @@ function buildRoster() {
 
 function printRoster() { window.print(); }
 
-function downloadPdf() {
-  const voteName = document.getElementById('voteName').value.trim() || '연명부';
-  const el = document.getElementById('rosterArea');
-  const btn = document.getElementById('pdfBtn');
-  btn.disabled = true; btn.textContent = 'PDF 생성 중...';
-
-  // 지금 만든 연명부가 전부 같은 투표구면, "투표구_N/" 폴더 안에 저장되도록 경로를 붙임
-  const selected = getSelectedMembers();
-  const districts = new Set(selected.map(function (m) { return m['투표구']; }));
-  const folder = (districts.size === 1) ? ('투표구_' + [...districts][0] + '/') : '';
-
-  html2pdf().set({
-    margin: 10,
-    filename: folder + voteName + '_연명부.pdf',
-    image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2 },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
-  }).from(el).save().then(function () {
-    btn.disabled = false; btn.textContent = 'PDF 다운로드';
-  }).catch(function (err) {
-    alert('PDF 생성 중 오류: ' + err.message);
-    btn.disabled = false; btn.textContent = 'PDF 다운로드';
+function rosterToSheetRows(members) {
+  return members.map(function (m, idx) {
+    return {
+      '번호': idx + 1,
+      '성명': m['성명'] || '',
+      '사업본부': m['사업본부'] || '',
+      '부서': m['부서'] || '',
+      '과': m['과'] || '',
+      '직위': m['직위'] || '',
+      '근무지': m['근무지'] || '',
+      '재직구분': m['재직구분'] || '',
+      '투표장소': m['투표장소'] || '',
+      '투표구': m['투표구'] || '',
+      '노조구분': m['노조구분'] || '',
+      '서명': ''
+    };
   });
 }
 
-/* ===================== 투표구별 일괄 PDF (폴더별로 한번에) ===================== */
-function buildRosterHtmlFor(voteName, districtLabel, members) {
-  const rows = members.map(function (m, idx) {
-    return (
-      '<tr>' +
-      '<td>' + (idx + 1) + '</td>' +
-      '<td>' + escapeHtml(m['성명']) + '</td>' +
-      '<td>' + escapeHtml(m['사업본부']) + '</td>' +
-      '<td>' + escapeHtml(m['부서']) + '</td>' +
-      '<td>' + escapeHtml(m['과']) + '</td>' +
-      '<td>' + escapeHtml(m['직위']) + '</td>' +
-      '<td>' + escapeHtml(m['근무지']) + '</td>' +
-      '<td>' + escapeHtml(m['재직구분']) + '</td>' +
-      '<td>' + escapeHtml(m['투표장소']) + '</td>' +
-      '<td>' + escapeHtml(m['투표구']) + '</td>' +
-      '<td class="sign-col"></td>' +
-      '</tr>'
-    );
-  }).join('');
+function downloadExcel() {
+  const voteName = document.getElementById('voteName').value.trim() || '연명부';
+  const selected = getRosterMembers();
+  if (selected.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
 
-  return (
-    '<div class="roster-title">' + escapeHtml(voteName) + ' 투표 연명부 (투표구 ' + escapeHtml(districtLabel) + ')</div>' +
-    '<div class="roster-meta">생성일: ' + new Date().toLocaleDateString('ko-KR') +
-    '   /   총 인원: ' + members.length + '명</div>' +
-    '<table><thead><tr>' +
-    '<th style="width:50px;">번호</th><th>성명</th><th>사업본부</th><th>부서</th><th>과</th><th>직위</th>' +
-    '<th>근무지</th><th>재직구분</th><th>투표장소</th><th>투표구</th><th class="sign-col">서명</th>' +
-    '</tr></thead><tbody>' + rows + '</tbody></table>'
-  );
+  // 지금 대상이 전부 같은 투표구면, "투표구_N/" 폴더 안에 저장되도록 경로를 붙임
+  const districts = new Set(selected.map(function (m) { return m['투표구']; }));
+  const folder = (districts.size === 1) ? ('투표구_' + [...districts][0] + '/') : '';
+
+  const data = rosterToSheetRows(selected);
+  const ws = XLSX.utils.json_to_sheet(data, {
+    header: ['번호','성명','사업본부','부서','과','직위','근무지','재직구분','투표장소','투표구','노조구분','서명']
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '연명부');
+  XLSX.writeFile(wb, folder + voteName + '_연명부.xlsx');
 }
 
-async function bulkGenerateByDistrict() {
+/* ===================== 투표구별 일괄 엑셀 (폴더별로 한번에) ===================== */
+function bulkGenerateByDistrict() {
   const voteName = document.getElementById('voteName').value.trim();
   if (!voteName) { alert('투표명을 입력해 주세요.'); return; }
 
-  // 선택된 인원이 있으면 그걸 기준으로, 없으면 현재 필터된 목록을 기준으로 폴더별 생성
-  let source = getSelectedMembers();
+  let source = getRosterMembers();
   if (source.length === 0) {
-    if (!hasActiveFilter() && !showAllForced) {
-      alert('먼저 인원을 선택하시거나, 필터로 대상자를 좁혀주세요.');
-      return;
-    }
-    source = filteredMembers();
+    alert('먼저 인원을 선택하시거나, 검색어/필터로 대상자를 좁혀주세요.');
+    return;
   }
-  if (source.length === 0) { alert('대상 인원이 없습니다.'); return; }
 
   const groups = {};
   source.forEach(function (m) {
@@ -614,40 +603,17 @@ async function bulkGenerateByDistrict() {
     return String(a).localeCompare(String(b), 'ko', { numeric: true });
   });
 
-  const btn = document.getElementById('bulkPdfBtn');
-  btn.disabled = true;
+  districtKeys.forEach(function (d) {
+    const data = rosterToSheetRows(groups[d]);
+    const ws = XLSX.utils.json_to_sheet(data, {
+      header: ['번호','성명','사업본부','부서','과','직위','근무지','재직구분','투표장소','투표구','노조구분','서명']
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '연명부');
+    XLSX.writeFile(wb, '투표구_' + d + '/' + voteName + '_투표구' + d + '_연명부.xlsx');
+  });
 
-  // 화면엔 안 보이지만 html2pdf가 그릴 수 있도록 화면 밖에 임시로 둠
-  const temp = document.createElement('div');
-  temp.style.position = 'fixed';
-  temp.style.left = '-9999px';
-  temp.style.top = '0';
-  temp.style.width = '1200px';
-  temp.className = 'rosterScroll';
-  document.body.appendChild(temp);
-
-  try {
-    for (let i = 0; i < districtKeys.length; i++) {
-      const d = districtKeys[i];
-      btn.textContent = '생성 중... (' + (i + 1) + '/' + districtKeys.length + ') 투표구 ' + d;
-      temp.innerHTML = buildRosterHtmlFor(voteName, d, groups[d]);
-
-      await html2pdf().set({
-        margin: 10,
-        filename: '투표구_' + d + '/' + voteName + '_투표구' + d + '_연명부.pdf',
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2 },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
-      }).from(temp).save();
-    }
-    alert('완료되었습니다. 총 ' + districtKeys.length + '개 투표구 PDF가 "투표구_숫자" 폴더별로 다운로드 폴더에 저장되었습니다.');
-  } catch (err) {
-    alert('일괄 생성 중 오류: ' + err.message);
-  } finally {
-    document.body.removeChild(temp);
-    btn.disabled = false;
-    btn.textContent = '투표구별 일괄 PDF (폴더별)';
-  }
+  alert('완료되었습니다. 총 ' + districtKeys.length + '개 투표구 엑셀 파일이 "투표구_숫자" 폴더별로 다운로드 폴더에 저장되었습니다.');
 }
 
 /* ===================== 투표 이력 저장 (GitHub 커밋) ===================== */
@@ -696,7 +662,7 @@ async function handleExcelUpload() {
     const colIndex = {};
     header.forEach(function (h, i) { colIndex[h] = i; });
 
-    const missing = FIELDS.filter(function (f) { return colIndex[f] === undefined; });
+    const missing = REQUIRED_UPLOAD_FIELDS.filter(function (f) { return colIndex[f] === undefined; });
     if (missing.length > 0) {
       throw new Error('엑셀 1행에 다음 헤더가 없습니다: ' + missing.join(', '));
     }
@@ -708,7 +674,9 @@ async function handleExcelUpload() {
       const name = row[colIndex['성명']];
       if (!name) continue;
       const obj = { id: id++ };
-      FIELDS.forEach(function (f) { obj[f] = String(row[colIndex[f]] || '').trim(); });
+      FIELDS.forEach(function (f) {
+        obj[f] = colIndex[f] !== undefined ? String(row[colIndex[f]] || '').trim() : '';
+      });
       newMembers.push(obj);
     }
 
@@ -722,7 +690,7 @@ async function handleExcelUpload() {
 
     allMembers = newMembers;
     selectedIds = {};
-    ['locationFilter','districtFilter']
+    ['unionFilter','locationFilter','districtFilter']
       .forEach(function (id) {
         const sel = document.getElementById(id);
         sel.innerHTML = sel.options[0].outerHTML;
