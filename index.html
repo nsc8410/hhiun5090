@@ -156,8 +156,9 @@
   <div class="panel no-print">
     <div class="controls">
       <input type="text" id="searchBox" placeholder="성명 검색" oninput="renderMembers()">
-      <select id="locationFilter" onchange="renderMembers()"><option value="">전체 투표장소</option></select>
-      <select id="districtFilter" onchange="renderMembers()"><option value="">전체 투표구</option></select>
+      <select id="locationFilter" onchange="onDistrictOrLocationChange()"><option value="">전체 투표장소</option></select>
+      <select id="districtFilter" onchange="onDistrictOrLocationChange()"><option value="">전체 투표구</option></select>
+      <select id="deptFilter" onchange="renderMembers()"><option value="">전체 부서</option></select>
     </div>
     <div class="controls">
       <button class="secondary" onclick="selectAllVisible(true)">보이는 인원 전체선택</button>
@@ -184,11 +185,16 @@
   <div class="panel no-print">
     <div class="controls">
       <input type="text" id="voteName" placeholder="투표명 (예: 2026년 의견일치안 찬반투표)">
-      <button onclick="buildRoster()">연명부 생성</button>
-      <button class="secondary" id="bulkExcelBtn" onclick="bulkGenerateByDistrict()">투표구별 일괄 엑셀 (폴더별)</button>
+      <label style="font-size:13px; margin-right:6px;">묶음 기준:</label>
+      <label style="margin-right:10px;"><input type="radio" name="groupBy" value="투표구" checked onchange="onGroupByChange()"> 투표구별</label>
+      <label><input type="radio" name="groupBy" value="부서" onchange="onGroupByChange()"> 부서별</label>
     </div>
-    <div class="sub" style="margin-bottom:0;">
-      "투표구별 일괄 엑셀"은 선택된 인원(또는 지금 검색·필터된 인원)을 투표구 번호별로 나눠서, 각각 "투표구_번호" 폴더 안에 엑셀로 한 번에 저장합니다.
+    <div class="controls">
+      <button onclick="buildRoster()">연명부 생성</button>
+      <button class="secondary" id="bulkExcelBtn" onclick="bulkGenerateByGroup()">일괄 엑셀 (폴더별)</button>
+    </div>
+    <div class="sub" style="margin-bottom:0;" id="bulkExcelHint">
+      "일괄 엑셀"은 선택된 인원(또는 지금 검색·필터된 인원)을 투표구 번호별로 나눠서, 각각 "투표구_번호" 폴더 안에 엑셀로 한 번에 저장합니다.
     </div>
   </div>
 
@@ -385,9 +391,9 @@ let showAllForced = false;
 
 const FIELDS = ['사업본부','부서','과','직위','사번','성명','근무지','재직구분','투표장소','투표구'];
 const REQUIRED_UPLOAD_FIELDS = ['사업본부','부서','과','직위','사번','성명','근무지','재직구분','투표장소','투표구'];
-const FILTER_FIELDS = ['투표장소','투표구'];
+const FILTER_FIELDS = ['투표장소','투표구','부서'];
 const FILTER_SELECT_IDS = {
-  '투표장소':'locationFilter','투표구':'districtFilter'
+  '투표장소':'locationFilter','투표구':'districtFilter','부서':'deptFilter'
 };
 
 window.onload = function () {
@@ -450,6 +456,32 @@ function buildFilterOptions() {
       sel.appendChild(opt);
     });
   });
+}
+
+// 투표장소/투표구 필터가 바뀌면, 부서 필터 목록을 그 조건에 맞는 부서만으로 다시 구성
+function onDistrictOrLocationChange() {
+  const district = document.getElementById('districtFilter').value;
+  const location = document.getElementById('locationFilter').value;
+  const deptSel = document.getElementById('deptFilter');
+  const prevDept = deptSel.value;
+
+  const candidates = allMembers.filter(function (m) {
+    if (district && String(m['투표구']) !== district) return false;
+    if (location && m['투표장소'] !== location) return false;
+    return true;
+  });
+  const set = {};
+  candidates.forEach(function (m) { if (m['부서']) set[m['부서']] = true; });
+  const values = Object.keys(set).sort(function (a, b) {
+    return String(a).localeCompare(String(b), 'ko', { numeric: true });
+  });
+
+  deptSel.innerHTML = '<option value="">전체 부서</option>' +
+    values.map(function (v) { return '<option value="' + v.replace(/"/g, '&quot;') + '">' + v + '</option>'; }).join('');
+  // 이전에 고른 부서가 여전히 유효하면 유지, 아니면 '전체 부서'로 초기화
+  deptSel.value = values.indexOf(prevDept) !== -1 ? prevDept : '';
+
+  renderMembers();
 }
 
 function hasActiveFilter() {
@@ -549,9 +581,22 @@ function getRosterMembers() {
   return [];
 }
 
-let rosterGroups = {};      // { 투표구: [members] }
+let rosterGroups = {};      // { 그룹키: [members] }
 let rosterVoteName = '';
-let currentRosterDistrict = null;
+let currentRosterGroup = null;
+let rosterGroupBy = '투표구'; // '투표구' | '부서'
+
+function getGroupBy() {
+  const el = document.querySelector('input[name="groupBy"]:checked');
+  return el ? el.value : '투표구';
+}
+
+function onGroupByChange() {
+  const by = getGroupBy();
+  document.getElementById('bulkExcelHint').textContent =
+    '"일괄 엑셀"은 선택된 인원(또는 지금 검색·필터된 인원)을 ' + by + ' 기준으로 나눠서, 각각 "' +
+    by + '_이름" 폴더 안에 엑셀로 한 번에 저장합니다.';
+}
 
 function buildRoster() {
   const voteName = document.getElementById('voteName').value.trim();
@@ -560,51 +605,53 @@ function buildRoster() {
   if (selected.length === 0) { alert('연명부에 포함할 인원을 선택하시거나, 검색어/필터로 대상자를 먼저 좁혀주세요.'); return; }
 
   rosterVoteName = voteName;
+  rosterGroupBy = getGroupBy();
   rosterGroups = {};
   selected.forEach(function (m) {
-    const d = m['투표구'] || '(미배정)';
-    (rosterGroups[d] = rosterGroups[d] || []).push(m);
+    const key = m[rosterGroupBy] || '(미배정)';
+    (rosterGroups[key] = rosterGroups[key] || []).push(m);
   });
 
-  const districtKeys = Object.keys(rosterGroups).sort(function (a, b) {
+  const groupKeys = Object.keys(rosterGroups).sort(function (a, b) {
     return String(a).localeCompare(String(b), 'ko', { numeric: true });
   });
 
-  // 투표구가 2개 이상이면 클릭해서 골라볼 수 있는 탭을 보여줌
+  // 그룹이 2개 이상이면 클릭해서 골라볼 수 있는 탭을 보여줌
   const tabsEl = document.getElementById('rosterTabs');
-  if (districtKeys.length > 1) {
-    tabsEl.innerHTML = districtKeys.map(function (d) {
-      return '<button type="button" class="roster-tab" data-d="' + escapeHtml(d) + '" ' +
-        'onclick="showRosterDistrict(\'' + d.replace(/'/g, "\\'") + '\')">' +
-        escapeHtml(d) + '투표구 (' + rosterGroups[d].length + '명)</button>';
+  if (groupKeys.length > 1) {
+    tabsEl.innerHTML = groupKeys.map(function (k) {
+      return '<button type="button" class="roster-tab" data-k="' + escapeHtml(k) + '" ' +
+        'onclick="showRosterGroup(\'' + k.replace(/'/g, "\\'") + '\')">' +
+        escapeHtml(k) + (rosterGroupBy === '투표구' ? '투표구' : '') + ' (' + rosterGroups[k].length + '명)</button>';
     }).join('');
   } else {
     tabsEl.innerHTML = '';
   }
 
-  showRosterDistrict(districtKeys[0]);
+  showRosterGroup(groupKeys[0]);
   document.getElementById('rosterArea').style.display = 'block';
   document.getElementById('rosterArea').scrollIntoView({ behavior: 'smooth' });
 }
 
-function showRosterDistrict(district) {
-  currentRosterDistrict = district;
-  const members = rosterGroups[district] || [];
+function showRosterGroup(key) {
+  currentRosterGroup = key;
+  const members = rosterGroups[key] || [];
 
   // 탭 활성 표시
   document.querySelectorAll('#rosterTabs .roster-tab').forEach(function (btn) {
-    btn.classList.toggle('active', btn.getAttribute('data-d') === String(district));
+    btn.classList.toggle('active', btn.getAttribute('data-k') === String(key));
   });
 
-  const districtCount = Object.keys(rosterGroups).length;
+  const groupCount = Object.keys(rosterGroups).length;
+  const label = rosterGroupBy === '투표구' ? (key + '투표구') : key;
   document.getElementById('rosterTitle').textContent =
-    rosterVoteName + ' 투표 연명부' + (districtCount > 1 ? ' — ' + district + '투표구' : '');
+    rosterVoteName + ' 투표 연명부' + (groupCount > 1 ? ' — ' + label : '');
   document.getElementById('rosterMeta').textContent =
     '생성일: ' + new Date().toLocaleDateString('ko-KR') + '   /   총 인원: ' + members.length + '명';
 
   const body = document.getElementById('rosterBody');
   const rows = [];
-  members.forEach(function (m, idx) {
+  members.forEach(function (m) {
     rows.push(
       '<tr>' +
       '<td>' + escapeHtml(m['사번']) + '</td>' +
@@ -626,6 +673,7 @@ function showRosterDistrict(district) {
 
 function printRoster() { window.print(); }
 
+
 function rosterToSheetRows(members) {
   return members.map(function (m) {
     return {
@@ -645,7 +693,7 @@ function rosterToSheetRows(members) {
 }
 
 function getCurrentRosterMembers() {
-  return rosterGroups[currentRosterDistrict] || [];
+  return rosterGroups[currentRosterGroup] || [];
 }
 
 function downloadExcel() {
@@ -653,9 +701,9 @@ function downloadExcel() {
   const selected = getCurrentRosterMembers();
   if (selected.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
 
-  const districtLabel = currentRosterDistrict;
-  const folder = '투표구_' + districtLabel + '/';
-  const filename = folder + voteName + '_투표구' + districtLabel + '_연명부.xlsx';
+  const label = currentRosterGroup;
+  const folder = rosterGroupBy + '_' + label + '/';
+  const filename = folder + voteName + '_' + rosterGroupBy + label + '_연명부.xlsx';
 
   const data = rosterToSheetRows(selected);
   const ws = XLSX.utils.json_to_sheet(data, {
@@ -666,8 +714,8 @@ function downloadExcel() {
   XLSX.writeFile(wb, filename);
 }
 
-/* ===================== 투표구별 일괄 엑셀 (폴더별로 한번에) ===================== */
-function bulkGenerateByDistrict() {
+/* ===================== 일괄 엑셀 (투표구별 또는 부서별, 폴더별로 한번에) ===================== */
+function bulkGenerateByGroup() {
   const voteName = document.getElementById('voteName').value.trim();
   if (!voteName) { alert('투표명을 입력해 주세요.'); return; }
 
@@ -677,26 +725,27 @@ function bulkGenerateByDistrict() {
     return;
   }
 
+  const by = getGroupBy();
   const groups = {};
   source.forEach(function (m) {
-    const d = m['투표구'] || '(미배정)';
-    (groups[d] = groups[d] || []).push(m);
+    const k = m[by] || '(미배정)';
+    (groups[k] = groups[k] || []).push(m);
   });
-  const districtKeys = Object.keys(groups).sort(function (a, b) {
+  const groupKeys = Object.keys(groups).sort(function (a, b) {
     return String(a).localeCompare(String(b), 'ko', { numeric: true });
   });
 
-  districtKeys.forEach(function (d) {
-    const data = rosterToSheetRows(groups[d]);
+  groupKeys.forEach(function (k) {
+    const data = rosterToSheetRows(groups[k]);
     const ws = XLSX.utils.json_to_sheet(data, {
       header: ['사번','성명','사업본부','부서','과','직위','근무지','재직구분','투표장소','투표구','서명']
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '연명부');
-    XLSX.writeFile(wb, '투표구_' + d + '/' + voteName + '_투표구' + d + '_연명부.xlsx');
+    XLSX.writeFile(wb, by + '_' + k + '/' + voteName + '_' + by + k + '_연명부.xlsx');
   });
 
-  alert('완료되었습니다. 총 ' + districtKeys.length + '개 투표구 엑셀 파일이 "투표구_숫자" 폴더별로 다운로드 폴더에 저장되었습니다.');
+  alert('완료되었습니다. 총 ' + groupKeys.length + '개 "' + by + '" 그룹의 엑셀 파일이 "' + by + '_이름" 폴더별로 다운로드 폴더에 저장되었습니다.');
 }
 
 /* ===================== 투표 이력 저장 (GitHub 커밋) ===================== */
@@ -712,7 +761,7 @@ async function saveHistory() {
     const cur = await ghGetJsonWithSha('data/history.json');
     const history = cur.data || [];
     history.push({
-      voteName: voteName + (Object.keys(rosterGroups).length > 1 ? ' (투표구 ' + currentRosterDistrict + ')' : ''),
+      voteName: voteName + (Object.keys(rosterGroups).length > 1 ? ' (' + rosterGroupBy + ' ' + currentRosterGroup + ')' : ''),
       count: selected.length,
       names: selected.map(function (m) { return m['성명']; }).join(', '),
       savedAt: new Date().toISOString()
@@ -805,7 +854,7 @@ async function handleExcelUpload() {
 
     allMembers = sortMembersByDept(finalMembers);
     selectedIds = {};
-    ['locationFilter','districtFilter']
+    ['locationFilter','districtFilter','deptFilter']
       .forEach(function (id) {
         const sel = document.getElementById(id);
         sel.innerHTML = sel.options[0].outerHTML;
