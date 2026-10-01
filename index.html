@@ -205,8 +205,11 @@
 
   <!-- 연명부 폴더 목록 -->
   <div class="panel no-print" id="rosterFoldersPanel" style="display:none;">
-    <div id="rosterFoldersHeading" style="font-weight:700; font-size:16px; margin-bottom:4px;"></div>
-    <div class="sub" style="margin-bottom:10px;">폴더를 클릭하면 그 명단을 확인하고 인쇄·다운로드할 수 있습니다.</div>
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div id="rosterFoldersHeading" style="font-weight:700; font-size:16px; margin-bottom:4px;"></div>
+      <button class="secondary" onclick="clearRosterFolders()">폴더 전체 지우기</button>
+    </div>
+    <div class="sub" style="margin-bottom:10px;">폴더를 클릭하면 그 명단을 확인하고 인쇄·다운로드할 수 있습니다. 새로 "연명부 생성"을 누르면 기존 폴더에 이어서 추가됩니다.</div>
     <div id="rosterFolders" style="display:flex; flex-wrap:wrap; gap:10px;"></div>
   </div>
 
@@ -640,19 +643,33 @@ function buildRoster() {
 
   rosterVoteName = voteName;
   rosterGroupBy = getGroupBy();
-  rosterGroups = {};
-  rosterGroupMeta = {};
+  // 기존 폴더는 지우지 않고, 새로 생성한 그룹만 추가/병합함
   selected.forEach(function (m) {
     const g = groupKeyAndLabel(m, rosterGroupBy);
-    (rosterGroups[g.key] = rosterGroups[g.key] || []).push(m);
+    if (!rosterGroups[g.key]) rosterGroups[g.key] = [];
+    const already = rosterGroups[g.key].some(function (x) { return x['사번'] === m['사번']; });
+    if (!already) rosterGroups[g.key].push(m);
     rosterGroupMeta[g.key] = g;
   });
 
+  renderRosterFolders();
+  document.getElementById('rosterFoldersPanel').scrollIntoView({ behavior: 'smooth' });
+}
+
+function clearRosterFolders() {
+  if (!confirm('지금까지 만든 연명부 폴더를 전부 지울까요? (저장소 데이터는 영향 없습니다)')) return;
+  rosterGroups = {};
+  rosterGroupMeta = {};
+  renderRosterFolders();
+}
+
+function renderRosterFolders() {
   const groupKeys = Object.keys(rosterGroups).sort(function (a, b) {
     return rosterGroupMeta[a].label.localeCompare(rosterGroupMeta[b].label, 'ko', { numeric: true });
   });
 
-  document.getElementById('rosterFoldersHeading').textContent = voteName + ' 투표 연명부 — 폴더 ' + groupKeys.length + '개';
+  document.getElementById('rosterFoldersHeading').textContent =
+    (rosterVoteName || '') + ' 투표 연명부 — 폴더 ' + groupKeys.length + '개';
   const foldersEl = document.getElementById('rosterFolders');
   foldersEl.innerHTML = groupKeys.map(function (k) {
     return '<button type="button" class="roster-folder" onclick="openRosterModal(\'' + k.replace(/'/g, "\\'") + '\')">' +
@@ -662,8 +679,7 @@ function buildRoster() {
       '</button>';
   }).join('');
 
-  document.getElementById('rosterFoldersPanel').style.display = 'block';
-  document.getElementById('rosterFoldersPanel').scrollIntoView({ behavior: 'smooth' });
+  document.getElementById('rosterFoldersPanel').style.display = groupKeys.length > 0 ? 'block' : 'none';
 
   // 폴더가 하나뿐이면 바로 열어서 한 번 더 클릭하지 않아도 되게 함
   if (groupKeys.length === 1) {
