@@ -203,22 +203,21 @@
     <div id="rosterArea">
       <div class="roster-title" id="rosterTitle"></div>
       <div class="roster-meta" id="rosterMeta"></div>
-      <div id="rosterTabs" class="no-print" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;"></div>
-      <div class="rosterScroll">
-        <table>
-          <thead>
-            <tr>
-              <th style="width:70px;">사번</th><th>성명</th><th>사업본부</th><th>부서</th><th>과</th><th>직위</th>
-              <th>근무지</th><th>재직구분</th><th>투표장소</th><th>투표구</th><th class="sign-col">서명</th>
-            </tr>
-          </thead>
-          <tbody id="rosterBody"></tbody>
-        </table>
-      </div>
       <div class="actions no-print">
         <button onclick="printRoster()">인쇄하기</button>
         <button class="ghost" id="excelBtn" onclick="downloadExcel()">엑셀 다운로드</button>
         <button class="secondary" id="historyBtn" onclick="saveHistory()">이력 저장(GitHub)</button>
+      </div>
+      <div id="rosterTabs" class="no-print" style="display:flex; flex-wrap:wrap; gap:6px; margin:10px 0;"></div>
+      <div class="rosterScroll">
+        <table>
+          <thead>
+            <tr>
+              <th>사업본부</th><th>부서</th><th>과</th><th>직위</th><th>성명</th><th style="width:70px;">사번</th><th class="sign-col">서명</th>
+            </tr>
+          </thead>
+          <tbody id="rosterBody"></tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -598,6 +597,17 @@ function onGroupByChange() {
     by + '_이름" 폴더 안에 엑셀로 한 번에 저장합니다.';
 }
 
+let rosterGroupMeta = {}; // key -> { label, district, dept }
+
+function groupKeyAndLabel(m, by) {
+  if (by === '부서') {
+    const d = m['투표구'] || '(미배정)';
+    return { key: m['부서'] + '__d' + d, label: (m['부서'] || '(부서없음)') + ' — ' + d + '투표구', district: d, dept: m['부서'] || '' };
+  }
+  const d = m['투표구'] || '(미배정)';
+  return { key: d, label: d + '투표구', district: d, dept: '' };
+}
+
 function buildRoster() {
   const voteName = document.getElementById('voteName').value.trim();
   const selected = getRosterMembers();
@@ -607,22 +617,24 @@ function buildRoster() {
   rosterVoteName = voteName;
   rosterGroupBy = getGroupBy();
   rosterGroups = {};
+  rosterGroupMeta = {};
   selected.forEach(function (m) {
-    const key = m[rosterGroupBy] || '(미배정)';
-    (rosterGroups[key] = rosterGroups[key] || []).push(m);
+    const g = groupKeyAndLabel(m, rosterGroupBy);
+    (rosterGroups[g.key] = rosterGroups[g.key] || []).push(m);
+    rosterGroupMeta[g.key] = g;
   });
 
   const groupKeys = Object.keys(rosterGroups).sort(function (a, b) {
-    return String(a).localeCompare(String(b), 'ko', { numeric: true });
+    return rosterGroupMeta[a].label.localeCompare(rosterGroupMeta[b].label, 'ko', { numeric: true });
   });
 
-  // 그룹이 2개 이상이면 클릭해서 골라볼 수 있는 탭을 보여줌
+  // 그룹이 2개 이상이면 클릭해서 골라볼 수 있는 탭을 보여줌 (부서별일 때도 투표구가 다르면 절대 안 섞임)
   const tabsEl = document.getElementById('rosterTabs');
   if (groupKeys.length > 1) {
     tabsEl.innerHTML = groupKeys.map(function (k) {
       return '<button type="button" class="roster-tab" data-k="' + escapeHtml(k) + '" ' +
         'onclick="showRosterGroup(\'' + k.replace(/'/g, "\\'") + '\')">' +
-        escapeHtml(k) + (rosterGroupBy === '투표구' ? '투표구' : '') + ' (' + rosterGroups[k].length + '명)</button>';
+        escapeHtml(rosterGroupMeta[k].label) + ' (' + rosterGroups[k].length + '명)</button>';
     }).join('');
   } else {
     tabsEl.innerHTML = '';
@@ -636,6 +648,7 @@ function buildRoster() {
 function showRosterGroup(key) {
   currentRosterGroup = key;
   const members = rosterGroups[key] || [];
+  const meta = rosterGroupMeta[key] || { label: key };
 
   // 탭 활성 표시
   document.querySelectorAll('#rosterTabs .roster-tab').forEach(function (btn) {
@@ -643,9 +656,8 @@ function showRosterGroup(key) {
   });
 
   const groupCount = Object.keys(rosterGroups).length;
-  const label = rosterGroupBy === '투표구' ? (key + '투표구') : key;
   document.getElementById('rosterTitle').textContent =
-    rosterVoteName + ' 투표 연명부' + (groupCount > 1 ? ' — ' + label : '');
+    rosterVoteName + ' 투표 연명부' + (groupCount > 1 ? ' — ' + meta.label : '');
   document.getElementById('rosterMeta').textContent =
     '생성일: ' + new Date().toLocaleDateString('ko-KR') + '   /   총 인원: ' + members.length + '명';
 
@@ -654,16 +666,12 @@ function showRosterGroup(key) {
   members.forEach(function (m) {
     rows.push(
       '<tr>' +
-      '<td>' + escapeHtml(m['사번']) + '</td>' +
-      '<td>' + escapeHtml(m['성명']) + '</td>' +
       '<td>' + escapeHtml(m['사업본부']) + '</td>' +
       '<td>' + escapeHtml(m['부서']) + '</td>' +
       '<td>' + escapeHtml(m['과']) + '</td>' +
       '<td>' + escapeHtml(m['직위']) + '</td>' +
-      '<td>' + escapeHtml(m['근무지']) + '</td>' +
-      '<td>' + escapeHtml(m['재직구분']) + '</td>' +
-      '<td>' + escapeHtml(m['투표장소']) + '</td>' +
-      '<td>' + escapeHtml(m['투표구']) + '</td>' +
+      '<td>' + escapeHtml(m['성명']) + '</td>' +
+      '<td>' + escapeHtml(m['사번']) + '</td>' +
       '<td class="sign-col"></td>' +
       '</tr>'
     );
@@ -677,16 +685,12 @@ function printRoster() { window.print(); }
 function rosterToSheetRows(members) {
   return members.map(function (m) {
     return {
-      '사번': m['사번'] || '',
-      '성명': m['성명'] || '',
       '사업본부': m['사업본부'] || '',
       '부서': m['부서'] || '',
       '과': m['과'] || '',
       '직위': m['직위'] || '',
-      '근무지': m['근무지'] || '',
-      '재직구분': m['재직구분'] || '',
-      '투표장소': m['투표장소'] || '',
-      '투표구': m['투표구'] || '',
+      '성명': m['성명'] || '',
+      '사번': m['사번'] || '',
       '서명': ''
     };
   });
@@ -696,18 +700,22 @@ function getCurrentRosterMembers() {
   return rosterGroups[currentRosterGroup] || [];
 }
 
+function safeFileName(s) {
+  return String(s).replace(/[\\/:*?"<>|]/g, '_');
+}
+
 function downloadExcel() {
   const voteName = rosterVoteName || document.getElementById('voteName').value.trim() || '연명부';
   const selected = getCurrentRosterMembers();
   if (selected.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
 
-  const label = currentRosterGroup;
-  const folder = rosterGroupBy + '_' + label + '/';
-  const filename = folder + voteName + '_' + rosterGroupBy + label + '_연명부.xlsx';
+  const meta = rosterGroupMeta[currentRosterGroup] || { label: String(currentRosterGroup) };
+  const folderName = safeFileName(meta.label);
+  const filename = folderName + '/' + voteName + '_' + folderName + '_연명부.xlsx';
 
   const data = rosterToSheetRows(selected);
   const ws = XLSX.utils.json_to_sheet(data, {
-    header: ['사번','성명','사업본부','부서','과','직위','근무지','재직구분','투표장소','투표구','서명']
+    header: ['사업본부','부서','과','직위','성명','사번','서명']
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '연명부');
@@ -727,25 +735,28 @@ function bulkGenerateByGroup() {
 
   const by = getGroupBy();
   const groups = {};
+  const meta = {};
   source.forEach(function (m) {
-    const k = m[by] || '(미배정)';
-    (groups[k] = groups[k] || []).push(m);
+    const g = groupKeyAndLabel(m, by);
+    (groups[g.key] = groups[g.key] || []).push(m);
+    meta[g.key] = g;
   });
   const groupKeys = Object.keys(groups).sort(function (a, b) {
-    return String(a).localeCompare(String(b), 'ko', { numeric: true });
+    return meta[a].label.localeCompare(meta[b].label, 'ko', { numeric: true });
   });
 
   groupKeys.forEach(function (k) {
+    const folderName = safeFileName(meta[k].label);
     const data = rosterToSheetRows(groups[k]);
     const ws = XLSX.utils.json_to_sheet(data, {
-      header: ['사번','성명','사업본부','부서','과','직위','근무지','재직구분','투표장소','투표구','서명']
+      header: ['사업본부','부서','과','직위','성명','사번','서명']
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '연명부');
-    XLSX.writeFile(wb, by + '_' + k + '/' + voteName + '_' + by + k + '_연명부.xlsx');
+    XLSX.writeFile(wb, folderName + '/' + voteName + '_' + folderName + '_연명부.xlsx');
   });
 
-  alert('완료되었습니다. 총 ' + groupKeys.length + '개 "' + by + '" 그룹의 엑셀 파일이 "' + by + '_이름" 폴더별로 다운로드 폴더에 저장되었습니다.');
+  alert('완료되었습니다. 총 ' + groupKeys.length + '개 그룹의 엑셀 파일이 (투표구가 겹치지 않게) 폴더별로 다운로드 폴더에 저장되었습니다.');
 }
 
 /* ===================== 투표 이력 저장 (GitHub 커밋) ===================== */
@@ -761,7 +772,7 @@ async function saveHistory() {
     const cur = await ghGetJsonWithSha('data/history.json');
     const history = cur.data || [];
     history.push({
-      voteName: voteName + (Object.keys(rosterGroups).length > 1 ? ' (' + rosterGroupBy + ' ' + currentRosterGroup + ')' : ''),
+      voteName: voteName + (Object.keys(rosterGroups).length > 1 ? ' (' + (rosterGroupMeta[currentRosterGroup] || {}).label + ')' : ''),
       count: selected.length,
       names: selected.map(function (m) { return m['성명']; }).join(', '),
       savedAt: new Date().toISOString()
