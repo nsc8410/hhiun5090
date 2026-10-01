@@ -46,6 +46,11 @@
   .roster-meta { text-align: right; font-size: 12px; color: #888; margin-bottom: 10px; }
   .roster-tab { padding: 6px 12px; border: 1px solid #d5d9e0; border-radius: 20px; background: #fff; color: #333; font-size: 13px; font-weight: 400; cursor: pointer; }
   .roster-tab.active { background: #2f4f8f; color: #fff; border-color: #2f4f8f; font-weight: 700; }
+  .roster-folder { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border: 1px solid #d5d9e0; border-radius: 10px; background: #fff; cursor: pointer; font-size: 14px; text-align: left; min-width: 200px; }
+  .roster-folder:hover { border-color: #2f4f8f; background: #f7f9ff; }
+  .roster-folder .icon { font-size: 26px; }
+  .roster-folder .label { font-weight: 700; color: #222; }
+  .roster-folder .count { font-size: 12px; color: #888; }
   .sign-col { width: 90px; }
   .rosterScroll { overflow-x: auto; }
 
@@ -70,8 +75,8 @@
   @media print {
     body { background: #fff; padding: 0; }
     .no-print { display: none !important; }
-    #rosterArea { display: block !important; }
-    #rosterPanel { border: none; box-shadow: none; padding: 0; }
+    #rosterModalBackdrop { display: flex !important; position: static !important; background: none !important; padding: 0 !important; }
+    .roster-modal-box { box-shadow: none !important; width: 100% !important; max-width: 100% !important; max-height: none !important; overflow: visible !important; padding: 0 !important; }
     table { font-size: 11px; }
     th { background: #eee !important; color: #000 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
@@ -198,17 +203,29 @@
     </div>
   </div>
 
-  <!-- 연명부 미리보기 -->
-  <div class="panel" id="rosterPanel">
-    <div id="rosterArea">
-      <div class="roster-title" id="rosterTitle"></div>
-      <div class="roster-meta" id="rosterMeta"></div>
+  <!-- 연명부 폴더 목록 -->
+  <div class="panel no-print" id="rosterFoldersPanel" style="display:none;">
+    <div id="rosterFoldersHeading" style="font-weight:700; font-size:16px; margin-bottom:4px;"></div>
+    <div class="sub" style="margin-bottom:10px;">폴더를 클릭하면 그 명단을 확인하고 인쇄·다운로드할 수 있습니다.</div>
+    <div id="rosterFolders" style="display:flex; flex-wrap:wrap; gap:10px;"></div>
+  </div>
+
+  <!-- 연명부 팝업(모달) -->
+  <div id="rosterModalBackdrop" onclick="if (event.target === this) closeRosterModal();"
+       style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1000; align-items:center; justify-content:center; padding:20px;">
+    <div class="roster-modal-box" style="background:#fff; border-radius:10px; padding:20px; width:1100px; max-width:95vw; max-height:90vh; overflow:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+        <div>
+          <div class="roster-title" id="rosterTitle" style="text-align:left;"></div>
+          <div class="roster-meta" id="rosterMeta" style="text-align:left;"></div>
+        </div>
+        <button class="secondary no-print" onclick="closeRosterModal()" style="flex:none;">닫기 ✕</button>
+      </div>
       <div class="actions no-print">
         <button onclick="printRoster()">인쇄하기</button>
         <button class="ghost" id="excelBtn" onclick="downloadExcel()">엑셀 다운로드</button>
         <button class="secondary" id="historyBtn" onclick="saveHistory()">이력 저장(GitHub)</button>
       </div>
-      <div id="rosterTabs" class="no-print" style="display:flex; flex-wrap:wrap; gap:6px; margin:10px 0;"></div>
       <div class="rosterScroll">
         <table>
           <thead>
@@ -635,32 +652,29 @@ function buildRoster() {
     return rosterGroupMeta[a].label.localeCompare(rosterGroupMeta[b].label, 'ko', { numeric: true });
   });
 
-  // 그룹이 2개 이상이면 클릭해서 골라볼 수 있는 탭을 보여줌 (부서별일 때도 투표구가 다르면 절대 안 섞임)
-  const tabsEl = document.getElementById('rosterTabs');
-  if (groupKeys.length > 1) {
-    tabsEl.innerHTML = groupKeys.map(function (k) {
-      return '<button type="button" class="roster-tab" data-k="' + escapeHtml(k) + '" ' +
-        'onclick="showRosterGroup(\'' + k.replace(/'/g, "\\'") + '\')">' +
-        escapeHtml(rosterGroupMeta[k].label) + ' (' + rosterGroups[k].length + '명)</button>';
-    }).join('');
-  } else {
-    tabsEl.innerHTML = '';
-  }
+  document.getElementById('rosterFoldersHeading').textContent = voteName + ' 투표 연명부 — 폴더 ' + groupKeys.length + '개';
+  const foldersEl = document.getElementById('rosterFolders');
+  foldersEl.innerHTML = groupKeys.map(function (k) {
+    return '<button type="button" class="roster-folder" onclick="openRosterModal(\'' + k.replace(/'/g, "\\'") + '\')">' +
+      '<span class="icon">📁</span>' +
+      '<span><span class="label">' + escapeHtml(rosterGroupMeta[k].label) + '</span><br>' +
+      '<span class="count">' + rosterGroups[k].length + '명</span></span>' +
+      '</button>';
+  }).join('');
 
-  showRosterGroup(groupKeys[0]);
-  document.getElementById('rosterArea').style.display = 'block';
-  document.getElementById('rosterArea').scrollIntoView({ behavior: 'smooth' });
+  document.getElementById('rosterFoldersPanel').style.display = 'block';
+  document.getElementById('rosterFoldersPanel').scrollIntoView({ behavior: 'smooth' });
+
+  // 폴더가 하나뿐이면 바로 열어서 한 번 더 클릭하지 않아도 되게 함
+  if (groupKeys.length === 1) {
+    openRosterModal(groupKeys[0]);
+  }
 }
 
-function showRosterGroup(key) {
+function openRosterModal(key) {
   currentRosterGroup = key;
   const members = rosterGroups[key] || [];
   const meta = rosterGroupMeta[key] || { label: key };
-
-  // 탭 활성 표시
-  document.querySelectorAll('#rosterTabs .roster-tab').forEach(function (btn) {
-    btn.classList.toggle('active', btn.getAttribute('data-k') === String(key));
-  });
 
   const groupCount = Object.keys(rosterGroups).length;
   document.getElementById('rosterTitle').textContent =
@@ -684,6 +698,12 @@ function showRosterGroup(key) {
     );
   });
   body.innerHTML = rows.join('');
+
+  document.getElementById('rosterModalBackdrop').style.display = 'flex';
+}
+
+function closeRosterModal() {
+  document.getElementById('rosterModalBackdrop').style.display = 'none';
 }
 
 function printRoster() { window.print(); }
