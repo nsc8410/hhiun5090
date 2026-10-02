@@ -54,6 +54,16 @@
   .roster-folder .count { font-size: 12px; color: #888; }
   .sign-col { width: 90px; }
   .rosterScroll { overflow-x: auto; }
+  /* 연명부 표(팝업/전체인쇄)는 칸 구분이 잘 보이게 진한 전체 테두리 + 칸 너비 비율 지정 */
+  .rosterScroll table { table-layout: fixed; }
+  .rosterScroll th, .rosterScroll td { border: 1px solid #333 !important; white-space: normal; word-break: keep-all; }
+  .rosterScroll th:nth-child(1), .rosterScroll td:nth-child(1) { width: 14%; } /* 사업본부 */
+  .rosterScroll th:nth-child(2), .rosterScroll td:nth-child(2) { width: 12%; } /* 부서 (조금 좁게) */
+  .rosterScroll th:nth-child(3), .rosterScroll td:nth-child(3) { width: 11%; } /* 과 */
+  .rosterScroll th:nth-child(4), .rosterScroll td:nth-child(4) { width: 11%; } /* 직위 */
+  .rosterScroll th:nth-child(5), .rosterScroll td:nth-child(5) { width: 12%; } /* 성명 */
+  .rosterScroll th:nth-child(6), .rosterScroll td:nth-child(6) { width: 12%; } /* 사번 */
+  .rosterScroll th:nth-child(7), .rosterScroll td:nth-child(7) { width: 28%; } /* 서명 (넓게) */
 
   .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
   .loading { font-size: 13px; color: #999; }
