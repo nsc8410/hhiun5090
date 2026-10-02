@@ -81,6 +81,9 @@
     .print-section:not(:first-child) { break-before: page; page-break-before: always; }
     .roster-modal-box { box-shadow: none !important; width: 100% !important; max-width: 100% !important; max-height: none !important; overflow: visible !important; padding: 0 !important; }
     table { font-size: 11px; }
+    /* 인주(도장) 찍을 공간 확보를 위해 인쇄 시 줄 높이를 엑셀 행높이 30 정도(약 10mm)로 키움 */
+    th, td { padding-top: 11px !important; padding-bottom: 11px !important; }
+    .sign-col { min-width: 100px; }
     th { background: #eee !important; color: #000 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style>
@@ -172,6 +175,7 @@
       <button class="secondary" onclick="selectAllVisible(true)">보이는 인원 전체선택</button>
       <button class="secondary" onclick="selectAllVisible(false)">선택 해제</button>
       <button class="secondary" id="showAllBtn" onclick="forceShowAll()">전체 인원 표시 (느릴 수 있음)</button>
+      <button class="secondary" onclick="unlockAllMembers()" title="연명부로 뽑혀서 잠긴 사람들을 전부 풀어줍니다. 그날 인쇄가 다 끝난 뒤에 누르세요.">🔒 잠금 초기화</button>
       <span id="selCount" class="count-badge">선택 0명</span>
     </div>
 
@@ -428,6 +432,7 @@ function sortMembersByDept(list) {
   return list;
 }
 let selectedIds = {};
+let lockedEmpids = {}; // 이미 연명부로 뽑힌(생성된) 사람의 사번 — 중복 선택 방지용
 let showAllForced = false;
 
 const FIELDS = ['사업본부','부서','과','직위','사번','성명','근무지','재직구분','투표장소','투표구'];
@@ -577,11 +582,15 @@ function renderMembers() {
 
   const rows = [];
   list.forEach(function (m) {
+    const locked = m['사번'] && lockedEmpids[m['사번']];
     const checked = selectedIds[m.id] ? 'checked' : '';
+    const disabledAttr = locked ? 'disabled' : '';
+    const rowStyle = locked ? ' style="color:#bbb; background:#fafafa;"' : '';
+    const lockedBadge = locked ? ' <span title="이미 연명부로 뽑힌 사람입니다" style="color:#c92a2a;">🔒</span>' : '';
     rows.push(
-      '<tr>' +
-      '<td><input type="checkbox" ' + checked + ' onchange="toggleSelect(' + m.id + ', this.checked)"></td>' +
-      '<td>' + escapeHtml(m['성명']) + '</td>' +
+      '<tr' + rowStyle + '>' +
+      '<td><input type="checkbox" ' + checked + ' ' + disabledAttr + ' onchange="toggleSelect(' + m.id + ', this.checked)"></td>' +
+      '<td>' + escapeHtml(m['성명']) + lockedBadge + '</td>' +
       '<td>' + escapeHtml(m['사업본부']) + '</td>' +
       '<td>' + escapeHtml(m['부서']) + '</td>' +
       '<td>' + escapeHtml(m['과']) + '</td>' +
@@ -607,10 +616,20 @@ function selectAllVisible(select) {
     alert('전체 선택 전에 먼저 검색어나 필터로 인원을 좁혀주세요.');
     return;
   }
+  let skipped = 0;
   filteredMembers().forEach(function (m) {
-    if (select) selectedIds[m.id] = true; else delete selectedIds[m.id];
+    const locked = m['사번'] && lockedEmpids[m['사번']];
+    if (select) {
+      if (locked) { skipped++; return; } // 이미 뽑힌 사람은 전체선택에서 제외
+      selectedIds[m.id] = true;
+    } else {
+      delete selectedIds[m.id];
+    }
   });
   renderMembers();
+  if (select && skipped > 0) {
+    showGlobalOk('이미 연명부로 뽑힌 ' + skipped + '명은 자동으로 제외하고 선택했습니다.');
+  }
 }
 function updateSelCount() {
   document.getElementById('selCount').textContent = '선택 ' + Object.keys(selectedIds).length + '명';
@@ -672,10 +691,22 @@ function buildRoster() {
     const already = rosterGroups[g.key].some(function (x) { return x['사번'] === m['사번']; });
     if (!already) rosterGroups[g.key].push(m);
     rosterGroupMeta[g.key] = g;
+    if (m['사번']) lockedEmpids[m['사번']] = true; // 연명부에 들어간 사람은 잠금 처리 (중복 방지)
   });
 
+  selectedIds = {}; // 방금 뽑은 사람들은 선택목록에서도 비워서, 다음 선택과 안 섞이게 함
+  renderMembers();
   renderRosterFolders();
   document.getElementById('rosterFoldersPanel').scrollIntoView({ behavior: 'smooth' });
+}
+
+function unlockAllMembers() {
+  const n = Object.keys(lockedEmpids).length;
+  if (n === 0) { alert('현재 잠겨있는 사람이 없습니다.'); return; }
+  if (!confirm(n + '명의 잠금을 전부 해제할까요? (인쇄가 다 끝난 뒤에만 눌러주세요)')) return;
+  lockedEmpids = {};
+  renderMembers();
+  showGlobalOk('잠금이 전부 초기화되었습니다.');
 }
 
 function clearRosterFolders() {
