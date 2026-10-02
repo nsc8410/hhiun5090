@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>조합원 투표 연명부</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -748,51 +747,7 @@ function safeFileName(s) {
   return String(s).replace(/[\\/:*?"<>|]/g, '_');
 }
 
-/* ===================== 엑셀 다운로드 공통 스타일(테두리 + 1행 연한 회색) ===================== */
-const THIN_BORDER = { style: 'thin', color: { argb: 'FFB7B7B7' } };
-
-function applyExcelTableStyle(ws) {
-  ws.eachRow({ includeEmpty: true }, function (row) {
-    row.eachCell({ includeEmpty: true }, function (cell) {
-      cell.border = { top: THIN_BORDER, left: THIN_BORDER, bottom: THIN_BORDER, right: THIN_BORDER };
-    });
-  });
-  const headerRow = ws.getRow(1);
-  headerRow.eachCell({ includeEmpty: true }, function (cell) {
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDEDED' } };
-    cell.font = Object.assign({}, cell.font, { bold: true });
-  });
-  headerRow.height = 20;
-}
-
-function buildStyledSheet(workbook, sheetName, header, rows) {
-  const ws = workbook.addWorksheet(sheetName);
-  ws.columns = header.map(function (h) {
-    const maxLen = rows.reduce(function (m, r) {
-      const v = r[h] == null ? '' : String(r[h]);
-      return Math.max(m, v.length);
-    }, String(h).length);
-    return { header: h, key: h, width: Math.min(Math.max(maxLen + 4, 10), 40) };
-  });
-  rows.forEach(function (r) { ws.addRow(r); });
-  applyExcelTableStyle(ws);
-  return ws;
-}
-
-async function downloadExcelWorkbook(workbook, filename) {
-  const buf = await workbook.xlsx.writeBuffer();
-  const blob = new Blob([buf], { type: 'application/octet-stream' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-}
-
-async function downloadExcel() {
+function downloadExcel() {
   const voteName = rosterVoteName || document.getElementById('voteName').value.trim() || '연명부';
   const selected = getCurrentRosterMembers();
   if (selected.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
@@ -802,9 +757,12 @@ async function downloadExcel() {
   const filename = folderName + '/' + voteName + '_' + folderName + '_연명부.xlsx';
 
   const data = rosterToSheetRows(selected);
-  const workbook = new ExcelJS.Workbook();
-  buildStyledSheet(workbook, '연명부', ['사업본부','부서','과','직위','성명','사번','서명'], data);
-  await downloadExcelWorkbook(workbook, filename);
+  const ws = XLSX.utils.json_to_sheet(data, {
+    header: ['사업본부','부서','과','직위','성명','사번','서명']
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '연명부');
+  XLSX.writeFile(wb, filename);
 }
 
 /* ===================== 일괄 엑셀 (투표구별 또는 부서별, 폴더별로 한번에) ===================== */
@@ -830,16 +788,18 @@ function bulkGenerateByGroup() {
     return meta[a].label.localeCompare(meta[b].label, 'ko', { numeric: true });
   });
 
-  (async function () {
-    for (const k of groupKeys) {
-      const folderName = safeFileName(meta[k].label);
-      const data = rosterToSheetRows(groups[k]);
-      const workbook = new ExcelJS.Workbook();
-      buildStyledSheet(workbook, '연명부', ['사업본부','부서','과','직위','성명','사번','서명'], data);
-      await downloadExcelWorkbook(workbook, folderName + '/' + voteName + '_' + folderName + '_연명부.xlsx');
-    }
-    alert('완료되었습니다. 총 ' + groupKeys.length + '개 그룹의 엑셀 파일이 (투표구가 겹치지 않게) 폴더별로 다운로드 폴더에 저장되었습니다.');
-  })();
+  groupKeys.forEach(function (k) {
+    const folderName = safeFileName(meta[k].label);
+    const data = rosterToSheetRows(groups[k]);
+    const ws = XLSX.utils.json_to_sheet(data, {
+      header: ['사업본부','부서','과','직위','성명','사번','서명']
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '연명부');
+    XLSX.writeFile(wb, folderName + '/' + voteName + '_' + folderName + '_연명부.xlsx');
+  });
+
+  alert('완료되었습니다. 총 ' + groupKeys.length + '개 그룹의 엑셀 파일이 (투표구가 겹치지 않게) 폴더별로 다운로드 폴더에 저장되었습니다.');
 }
 
 /* ===================== 투표 이력 저장 (GitHub 커밋) ===================== */
@@ -885,17 +845,25 @@ async function handleExcelUpload() {
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
 
-    const header = rows[0].map(function (h) { return String(h).trim(); });
-    const colIndex = {};
-    header.forEach(function (h, i) { colIndex[h] = i; });
-
-    const missing = REQUIRED_UPLOAD_FIELDS.filter(function (f) { return colIndex[f] === undefined; });
-    if (missing.length > 0) {
-      throw new Error('엑셀 1행에 다음 헤더가 없습니다: ' + missing.join(', '));
+    // 엑셀 맨 위에 제목줄/빈 줄이 있어도 괜찮도록, 실제 헤더가 있는 줄을 위에서부터 최대 20행까지 찾아봄
+    let headerRowIdx = -1;
+    let colIndex = {};
+    for (let i = 0; i < Math.min(rows.length, 20); i++) {
+      const candidate = {};
+      (rows[i] || []).forEach(function (h, idx) { candidate[String(h).trim()] = idx; });
+      const missingHere = REQUIRED_UPLOAD_FIELDS.filter(function (f) { return candidate[f] === undefined; });
+      if (missingHere.length === 0) {
+        headerRowIdx = i;
+        colIndex = candidate;
+        break;
+      }
+    }
+    if (headerRowIdx === -1) {
+      throw new Error('엑셀 위쪽 20행 안에서 다음 헤더를 모두 가진 줄을 찾지 못했습니다: ' + REQUIRED_UPLOAD_FIELDS.join(', '));
     }
 
     const uploadedRows = [];
-    for (let r = 1; r < rows.length; r++) {
+    for (let r = headerRowIdx + 1; r < rows.length; r++) {
       const row = rows[r];
       const name = row[colIndex['성명']];
       if (!name) continue;
@@ -965,16 +933,17 @@ async function handleExcelUpload() {
 }
 
 /* ===================== 현재 필터 결과 엑셀 다운로드 ===================== */
-async function downloadFilteredExcel() {
+function downloadFilteredExcel() {
   const list = (hasActiveFilter() || showAllForced) ? filteredMembers() : allMembers;
   const data = list.map(function (m) {
     const obj = {};
     FIELDS.forEach(function (f) { obj[f] = m[f]; });
     return obj;
   });
-  const workbook = new ExcelJS.Workbook();
-  buildStyledSheet(workbook, '명단', FIELDS, data);
-  await downloadExcelWorkbook(workbook, '조합원명단_' + new Date().toISOString().slice(0,10) + '.xlsx');
+  const ws = XLSX.utils.json_to_sheet(data, { header: FIELDS });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '명단');
+  XLSX.writeFile(wb, '조합원명단_' + new Date().toISOString().slice(0,10) + '.xlsx');
 }
 
 /* ===================== 유틸 ===================== */
