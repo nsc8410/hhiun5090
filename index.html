@@ -221,7 +221,7 @@
       </div>
     </div>
     <div class="sub" style="margin:4px 0 10px;">폴더를 클릭하면 그 명단 하나만 확인·인쇄·다운로드할 수 있고, "전체 인쇄 보기"를 누르면 전체 폴더를 부서(또는 투표구)마다 새 페이지로 나눠서 한 번에 인쇄할 수 있습니다. 새로 "연명부 생성"을 누르면 기존 폴더에 이어서 추가됩니다.</div>
-    <div id="rosterFolders" style="display:flex; flex-wrap:wrap; gap:10px;"></div>
+    <div id="rosterFolders"></div>
   </div>
 
   <!-- 연명부 팝업(모달) -->
@@ -649,10 +649,12 @@ function getRosterMembers() {
   return [];
 }
 
-let rosterGroups = {};      // { 그룹키: [members] }
-let rosterVoteName = '';
+let rosterBatches = [];     // [{ id, voteName, groupBy, groups:{key:[members]}, groupMeta:{key:{...}} }]
+let currentOpenBatchId = null;
 let currentRosterGroup = null;
 let rosterGroupBy = '투표구'; // '투표구' | '부서'
+const BATCH_PAGE_SIZE = 5;
+let currentBatchPage = 0;
 
 function getGroupBy() {
   const el = document.querySelector('input[name="groupBy"]:checked');
@@ -665,8 +667,6 @@ function onGroupByChange() {
     '"일괄 엑셀"은 선택된 인원(또는 지금 검색·필터된 인원)을 ' + by + ' 기준으로 나눠서, 각각 "' +
     by + '_이름" 폴더 안에 엑셀로 한 번에 저장합니다.';
 }
-
-let rosterGroupMeta = {}; // key -> { label, district, dept }
 
 function groupKeyAndLabel(m, by) {
   if (by === '부서') {
@@ -683,20 +683,31 @@ function buildRoster() {
   if (!voteName) { alert('투표명을 입력해 주세요.'); return; }
   if (selected.length === 0) { alert('연명부에 포함할 인원을 선택하시거나, 검색어/필터로 대상자를 먼저 좁혀주세요.'); return; }
 
-  rosterVoteName = voteName;
   rosterGroupBy = getGroupBy();
-  // 기존 폴더는 지우지 않고, 새로 생성한 그룹만 추가/병합함
+
+  // 같은 이름으로 이미 만든 묶음이 있으면 거기에 이어붙이고, 없으면 새 묶음(박스)을 하나 만듦
+  let batch = rosterBatches.find(function (b) { return b.voteName === voteName; });
+  if (!batch) {
+    batch = { id: 'b' + Date.now() + Math.random().toString(36).slice(2, 6), voteName: voteName, groupBy: rosterGroupBy, groups: {}, groupMeta: {} };
+    rosterBatches.push(batch);
+  }
+  batch.groupBy = rosterGroupBy;
+
   selected.forEach(function (m) {
     const g = groupKeyAndLabel(m, rosterGroupBy);
-    if (!rosterGroups[g.key]) rosterGroups[g.key] = [];
-    const already = rosterGroups[g.key].some(function (x) { return x['사번'] === m['사번']; });
-    if (!already) rosterGroups[g.key].push(m);
-    rosterGroupMeta[g.key] = g;
+    if (!batch.groups[g.key]) batch.groups[g.key] = [];
+    const already = batch.groups[g.key].some(function (x) { return x['사번'] === m['사번']; });
+    if (!already) batch.groups[g.key].push(m);
+    batch.groupMeta[g.key] = g;
     if (m['사번']) lockedEmpids[m['사번']] = true; // 연명부에 들어간 사람은 잠금 처리 (중복 방지)
   });
 
   selectedIds = {}; // 방금 뽑은 사람들은 선택목록에서도 비워서, 다음 선택과 안 섞이게 함
   renderMembers();
+
+  // 방금 쓴 묶음이 보이는 페이지로 자동 이동
+  currentBatchPage = Math.floor(rosterBatches.indexOf(batch) / BATCH_PAGE_SIZE);
+
   renderRosterFolders();
   document.getElementById('rosterFoldersPanel').scrollIntoView({ behavior: 'smooth' });
 }
@@ -711,44 +722,90 @@ function unlockAllMembers() {
 }
 
 function clearRosterFolders() {
-  if (!confirm('지금까지 만든 연명부 폴더를 전부 지울까요? (저장소 데이터는 영향 없습니다)')) return;
-  rosterGroups = {};
-  rosterGroupMeta = {};
+  if (!confirm('지금까지 만든 연명부 묶음을 전부 지울까요? (저장소 데이터는 영향 없습니다)')) return;
+  rosterBatches = [];
+  currentBatchPage = 0;
+  renderRosterFolders();
+}
+
+function changeBatchPage(delta) {
+  currentBatchPage += delta;
   renderRosterFolders();
 }
 
 function renderRosterFolders() {
-  const groupKeys = Object.keys(rosterGroups).sort(function (a, b) {
-    return rosterGroupMeta[a].label.localeCompare(rosterGroupMeta[b].label, 'ko', { numeric: true });
-  });
+  const panel = document.getElementById('rosterFoldersPanel');
+  const foldersEl = document.getElementById('rosterFolders');
+
+  if (rosterBatches.length === 0) {
+    panel.style.display = 'none';
+    foldersEl.innerHTML = '';
+    return;
+  }
+  panel.style.display = 'block';
+
+  const totalPages = Math.max(1, Math.ceil(rosterBatches.length / BATCH_PAGE_SIZE));
+  if (currentBatchPage >= totalPages) currentBatchPage = totalPages - 1;
+  if (currentBatchPage < 0) currentBatchPage = 0;
+
+  const start = currentBatchPage * BATCH_PAGE_SIZE;
+  const pageBatches = rosterBatches.slice(start, start + BATCH_PAGE_SIZE);
+  const totalFolders = rosterBatches.reduce(function (sum, b) { return sum + Object.keys(b.groups).length; }, 0);
 
   document.getElementById('rosterFoldersHeading').textContent =
-    (rosterVoteName || '') + ' 투표 연명부 — 폴더 ' + groupKeys.length + '개';
-  const foldersEl = document.getElementById('rosterFolders');
-  foldersEl.innerHTML = groupKeys.map(function (k) {
-    return '<button type="button" class="roster-folder" onclick="openRosterModal(\'' + k.replace(/'/g, "\\'") + '\')">' +
-      '<span class="icon">📁</span>' +
-      '<span><span class="label">' + escapeHtml(rosterGroupMeta[k].label) + '</span><br>' +
-      '<span class="count">' + rosterGroups[k].length + '명</span></span>' +
-      '</button>';
+    '연명부 — 총 ' + rosterBatches.length + '개 묶음 (폴더 ' + totalFolders + '개)';
+
+  let html = pageBatches.map(function (batch) {
+    const keys = Object.keys(batch.groups).sort(function (a, b) {
+      return batch.groupMeta[a].label.localeCompare(batch.groupMeta[b].label, 'ko', { numeric: true });
+    });
+    const totalInBatch = keys.reduce(function (s, k) { return s + batch.groups[k].length; }, 0);
+
+    const folderButtons = keys.map(function (k) {
+      return '<button type="button" class="roster-folder" onclick="openRosterModal(\'' + batch.id + '\',\'' + k.replace(/'/g, "\\'") + '\')">' +
+        '<span class="icon">📁</span>' +
+        '<span><span class="label">' + escapeHtml(batch.groupMeta[k].label) + '</span><br>' +
+        '<span class="count">' + batch.groups[k].length + '명</span></span>' +
+        '</button>';
+    }).join('');
+
+    return (
+      '<div style="border:1px solid #e2e6ee; border-radius:10px; padding:14px; margin-bottom:14px;">' +
+      '<div style="font-weight:700; font-size:15px; margin-bottom:8px; color:#2f4f8f;">' +
+      escapeHtml(batch.voteName) + ' — 폴더 ' + keys.length + '개 (총 ' + totalInBatch + '명)</div>' +
+      '<div style="display:flex; flex-wrap:wrap; gap:10px;">' + folderButtons + '</div>' +
+      '</div>'
+    );
   }).join('');
 
-  document.getElementById('rosterFoldersPanel').style.display = groupKeys.length > 0 ? 'block' : 'none';
+  if (totalPages > 1) {
+    html += '<div style="display:flex; justify-content:center; align-items:center; gap:10px; margin-top:6px;">' +
+      '<button class="secondary" ' + (currentBatchPage === 0 ? 'disabled' : '') + ' onclick="changeBatchPage(-1)">이전</button>' +
+      '<span style="font-size:13px; color:#666;">' + (currentBatchPage + 1) + ' / ' + totalPages + ' 페이지</span>' +
+      '<button class="secondary" ' + (currentBatchPage === totalPages - 1 ? 'disabled' : '') + ' onclick="changeBatchPage(1)">다음</button>' +
+      '</div>';
+  }
 
-  // 폴더가 하나뿐이면 바로 열어서 한 번 더 클릭하지 않아도 되게 함
-  if (groupKeys.length === 1) {
-    openRosterModal(groupKeys[0]);
+  foldersEl.innerHTML = html;
+
+  // 묶음이 1개, 그 안의 폴더도 1개뿐이면 바로 열어서 한 번 더 클릭 안 해도 되게 함
+  if (rosterBatches.length === 1) {
+    const onlyKeys = Object.keys(rosterBatches[0].groups);
+    if (onlyKeys.length === 1) openRosterModal(rosterBatches[0].id, onlyKeys[0]);
   }
 }
 
-function openRosterModal(key) {
+function openRosterModal(batchId, key) {
+  const batch = rosterBatches.find(function (b) { return b.id === batchId; });
+  if (!batch) return;
+  currentOpenBatchId = batchId;
   currentRosterGroup = key;
-  const members = rosterGroups[key] || [];
-  const meta = rosterGroupMeta[key] || { label: key };
+  const members = batch.groups[key] || [];
+  const meta = batch.groupMeta[key] || { label: key };
 
-  const groupCount = Object.keys(rosterGroups).length;
+  const groupCount = Object.keys(batch.groups).length;
   document.getElementById('rosterTitle').textContent =
-    rosterVoteName + ' 투표 연명부' + (groupCount > 1 ? ' — ' + meta.label : '');
+    batch.voteName + ' 투표 연명부' + (groupCount > 1 ? ' — ' + meta.label : '');
   document.getElementById('rosterMeta').textContent =
     '생성일: ' + new Date().toLocaleDateString('ko-KR') + '   /   총 인원: ' + members.length + '명';
 
@@ -776,20 +833,23 @@ function closeRosterModal() {
   document.getElementById('rosterModalBackdrop').style.display = 'none';
 }
 
-/* ===================== 전체 인쇄 보기 (폴더 전부를 한 번에, 부서/투표구마다 새 페이지) ===================== */
+/* ===================== 전체 인쇄 보기 (만들어둔 모든 묶음·폴더를 한 번에, 하나마다 새 페이지) ===================== */
 function openPrintAllModal() {
-  const groupKeys = Object.keys(rosterGroups).sort(function (a, b) {
-    return rosterGroupMeta[a].label.localeCompare(rosterGroupMeta[b].label, 'ko', { numeric: true });
+  const allGroups = [];
+  rosterBatches.forEach(function (batch) {
+    const keys = Object.keys(batch.groups).sort(function (a, b) {
+      return batch.groupMeta[a].label.localeCompare(batch.groupMeta[b].label, 'ko', { numeric: true });
+    });
+    keys.forEach(function (k) {
+      allGroups.push({ voteName: batch.voteName, members: batch.groups[k], label: batch.groupMeta[k].label });
+    });
   });
-  if (groupKeys.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
+  if (allGroups.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
 
-  document.getElementById('printAllTitle').textContent =
-    (rosterVoteName || '') + ' 투표 연명부 — 전체 ' + groupKeys.length + '개';
+  document.getElementById('printAllTitle').textContent = '전체 연명부 인쇄 — 총 ' + allGroups.length + '개';
 
-  const sections = groupKeys.map(function (k) {
-    const members = rosterGroups[k];
-    const meta = rosterGroupMeta[k];
-    const rows = members.map(function (m) {
+  const sections = allGroups.map(function (g) {
+    const rows = g.members.map(function (m) {
       return '<tr>' +
         '<td>' + escapeHtml(m['사업본부']) + '</td>' +
         '<td>' + escapeHtml(m['부서']) + '</td>' +
@@ -802,8 +862,8 @@ function openPrintAllModal() {
     }).join('');
     return (
       '<div class="print-section">' +
-      '<div class="roster-title">' + escapeHtml(rosterVoteName) + ' 투표 연명부 — ' + escapeHtml(meta.label) + '</div>' +
-      '<div class="roster-meta">생성일: ' + new Date().toLocaleDateString('ko-KR') + '   /   총 인원: ' + members.length + '명</div>' +
+      '<div class="roster-title">' + escapeHtml(g.voteName) + ' 투표 연명부 — ' + escapeHtml(g.label) + '</div>' +
+      '<div class="roster-meta">생성일: ' + new Date().toLocaleDateString('ko-KR') + '   /   총 인원: ' + g.members.length + '명</div>' +
       '<div class="rosterScroll"><table><thead><tr>' +
       '<th>사업본부</th><th>부서</th><th>과</th><th>직위</th><th>성명</th><th style="width:70px;">사번</th><th class="sign-col">서명</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
@@ -836,8 +896,13 @@ function rosterToSheetRows(members) {
   });
 }
 
+function getCurrentBatch() {
+  return rosterBatches.find(function (b) { return b.id === currentOpenBatchId; });
+}
+
 function getCurrentRosterMembers() {
-  return rosterGroups[currentRosterGroup] || [];
+  const batch = getCurrentBatch();
+  return (batch && batch.groups[currentRosterGroup]) || [];
 }
 
 function safeFileName(s) {
@@ -845,11 +910,12 @@ function safeFileName(s) {
 }
 
 function downloadExcel() {
-  const voteName = rosterVoteName || document.getElementById('voteName').value.trim() || '연명부';
+  const batch = getCurrentBatch();
+  const voteName = (batch && batch.voteName) || document.getElementById('voteName').value.trim() || '연명부';
   const selected = getCurrentRosterMembers();
   if (selected.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
 
-  const meta = rosterGroupMeta[currentRosterGroup] || { label: String(currentRosterGroup) };
+  const meta = (batch && batch.groupMeta[currentRosterGroup]) || { label: String(currentRosterGroup) };
   const folderName = safeFileName(meta.label);
   const filename = folderName + '/' + voteName + '_' + folderName + '_연명부.xlsx';
 
@@ -901,7 +967,8 @@ function bulkGenerateByGroup() {
 
 /* ===================== 투표 이력 저장 (GitHub 커밋) ===================== */
 async function saveHistory() {
-  const voteName = rosterVoteName || document.getElementById('voteName').value.trim();
+  const batch = getCurrentBatch();
+  const voteName = (batch && batch.voteName) || document.getElementById('voteName').value.trim();
   const selected = getCurrentRosterMembers();
   if (!voteName || selected.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
 
@@ -912,7 +979,7 @@ async function saveHistory() {
     const cur = await ghGetJsonWithSha('data/history.json');
     const history = cur.data || [];
     history.push({
-      voteName: voteName + (Object.keys(rosterGroups).length > 1 ? ' (' + (rosterGroupMeta[currentRosterGroup] || {}).label + ')' : ''),
+      voteName: voteName + ((batch && Object.keys(batch.groups).length > 1) ? ' (' + (batch.groupMeta[currentRosterGroup] || {}).label + ')' : ''),
       count: selected.length,
       names: selected.map(function (m) { return m['성명']; }).join(', '),
       savedAt: new Date().toISOString()
