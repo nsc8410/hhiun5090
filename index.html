@@ -75,7 +75,10 @@
   @media print {
     body { background: #fff; padding: 0; }
     .no-print { display: none !important; }
-    #rosterModalBackdrop { display: flex !important; position: static !important; background: none !important; padding: 0 !important; }
+    /* 모달이 열려있을 때(JS가 display:flex로 바꿔둔 상태)만 인쇄 레이아웃을 정리함.
+       닫혀있는(display:none) 모달까지 강제로 보이게 하지는 않음 */
+    #rosterModalBackdrop, #printAllModalBackdrop { position: static !important; background: none !important; padding: 0 !important; }
+    .print-section:not(:first-child) { break-before: page; page-break-before: always; }
     .roster-modal-box { box-shadow: none !important; width: 100% !important; max-width: 100% !important; max-height: none !important; overflow: visible !important; padding: 0 !important; }
     table { font-size: 11px; }
     th { background: #eee !important; color: #000 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -205,11 +208,14 @@
 
   <!-- 연명부 폴더 목록 -->
   <div class="panel no-print" id="rosterFoldersPanel" style="display:none;">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-      <div id="rosterFoldersHeading" style="font-weight:700; font-size:16px; margin-bottom:4px;"></div>
-      <button class="secondary" onclick="clearRosterFolders()">폴더 전체 지우기</button>
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <div id="rosterFoldersHeading" style="font-weight:700; font-size:16px;"></div>
+      <div style="display:flex; gap:8px;">
+        <button onclick="openPrintAllModal()">전체 인쇄 보기 (한 번에)</button>
+        <button class="secondary" onclick="clearRosterFolders()">폴더 전체 지우기</button>
+      </div>
     </div>
-    <div class="sub" style="margin-bottom:10px;">폴더를 클릭하면 그 명단을 확인하고 인쇄·다운로드할 수 있습니다. 새로 "연명부 생성"을 누르면 기존 폴더에 이어서 추가됩니다.</div>
+    <div class="sub" style="margin:4px 0 10px;">폴더를 클릭하면 그 명단 하나만 확인·인쇄·다운로드할 수 있고, "전체 인쇄 보기"를 누르면 전체 폴더를 부서(또는 투표구)마다 새 페이지로 나눠서 한 번에 인쇄할 수 있습니다. 새로 "연명부 생성"을 누르면 기존 폴더에 이어서 추가됩니다.</div>
     <div id="rosterFolders" style="display:flex; flex-wrap:wrap; gap:10px;"></div>
   </div>
 
@@ -239,6 +245,22 @@
           <tbody id="rosterBody"></tbody>
         </table>
       </div>
+    </div>
+  </div>
+
+  <!-- 전체 인쇄 보기 팝업(모달) -->
+  <div id="printAllModalBackdrop" onclick="if (event.target === this) closePrintAllModal();"
+       style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1001; align-items:center; justify-content:center; padding:20px;">
+    <div class="roster-modal-box" style="background:#fff; border-radius:10px; padding:20px; width:1100px; max-width:95vw; max-height:90vh; overflow:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+        <div class="roster-title" id="printAllTitle" style="text-align:left;"></div>
+        <button class="secondary no-print" onclick="closePrintAllModal()" style="flex:none;">닫기 ✕</button>
+      </div>
+      <div class="actions no-print">
+        <button onclick="window.print()">전체 인쇄하기</button>
+      </div>
+      <div class="sub no-print">인쇄창에서 프린터 대신 "PDF로 저장"을 고르시면, 부서(또는 투표구)별로 페이지가 나뉜 PDF 파일 하나로 받으실 수 있습니다.</div>
+      <div id="printAllContent"></div>
     </div>
   </div>
 </div>
@@ -720,6 +742,49 @@ function openRosterModal(key) {
 
 function closeRosterModal() {
   document.getElementById('rosterModalBackdrop').style.display = 'none';
+}
+
+/* ===================== 전체 인쇄 보기 (폴더 전부를 한 번에, 부서/투표구마다 새 페이지) ===================== */
+function openPrintAllModal() {
+  const groupKeys = Object.keys(rosterGroups).sort(function (a, b) {
+    return rosterGroupMeta[a].label.localeCompare(rosterGroupMeta[b].label, 'ko', { numeric: true });
+  });
+  if (groupKeys.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
+
+  document.getElementById('printAllTitle').textContent =
+    (rosterVoteName || '') + ' 투표 연명부 — 전체 ' + groupKeys.length + '개';
+
+  const sections = groupKeys.map(function (k) {
+    const members = rosterGroups[k];
+    const meta = rosterGroupMeta[k];
+    const rows = members.map(function (m) {
+      return '<tr>' +
+        '<td>' + escapeHtml(m['사업본부']) + '</td>' +
+        '<td>' + escapeHtml(m['부서']) + '</td>' +
+        '<td>' + escapeHtml(m['과']) + '</td>' +
+        '<td>' + escapeHtml(m['직위']) + '</td>' +
+        '<td>' + escapeHtml(m['성명']) + '</td>' +
+        '<td>' + escapeHtml(m['사번']) + '</td>' +
+        '<td class="sign-col"></td>' +
+        '</tr>';
+    }).join('');
+    return (
+      '<div class="print-section">' +
+      '<div class="roster-title">' + escapeHtml(rosterVoteName) + ' 투표 연명부 — ' + escapeHtml(meta.label) + '</div>' +
+      '<div class="roster-meta">생성일: ' + new Date().toLocaleDateString('ko-KR') + '   /   총 인원: ' + members.length + '명</div>' +
+      '<div class="rosterScroll"><table><thead><tr>' +
+      '<th>사업본부</th><th>부서</th><th>과</th><th>직위</th><th>성명</th><th style="width:70px;">사번</th><th class="sign-col">서명</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '</div>'
+    );
+  }).join('');
+
+  document.getElementById('printAllContent').innerHTML = sections;
+  document.getElementById('printAllModalBackdrop').style.display = 'flex';
+}
+
+function closePrintAllModal() {
+  document.getElementById('printAllModalBackdrop').style.display = 'none';
 }
 
 function printRoster() { window.print(); }
