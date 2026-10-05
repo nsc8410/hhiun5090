@@ -55,9 +55,9 @@
   .roster-folder .count { font-size: 12px; color: #888; }
   .rosterScroll { overflow-x: auto; }
   /* ===== 연명부 표: "진짜_최종.xlsx" 서식(열 비율·행 높이·글꼴·테두리·헤더 반복)과 동일하게 ===== */
-  .roster-sheet { width: 100%; }
+  .roster-sheet { width: 329mm; margin: 0 auto; }
   .roster-table { table-layout: fixed; border-collapse: collapse; width: 100%; background: #fff;
-    font-family: '새굴림','Saegulim','굴림','Gulim','Malgun Gothic',sans-serif; font-size: 11pt; color: #000; white-space: normal; }
+    font-family: '새굴림','Saegulim','굴림','Gulim','Malgun Gothic',sans-serif; font-size: 11pt; color: #000; white-space: nowrap; }
   .roster-table th, .roster-table td { border: 1px solid #000 !important; text-align: center; vertical-align: middle;
     padding: 0 3px; word-break: keep-all; overflow: hidden; background: #fff !important; color: #000 !important; position: static; }
   .roster-table tbody tr:hover td { background: #fff !important; }
@@ -246,7 +246,7 @@
   <!-- 연명부 팝업(모달) -->
   <div id="rosterModalBackdrop" onclick="if (event.target === this) closeRosterModal();"
        style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1000; align-items:center; justify-content:center; padding:20px;">
-    <div class="roster-modal-box" style="background:#fff; border-radius:10px; padding:20px; width:1100px; max-width:95vw; max-height:90vh; overflow:auto;">
+    <div class="roster-modal-box" style="background:#fff; border-radius:10px; padding:20px; width:1300px; max-width:95vw; max-height:90vh; overflow:auto;">
       <div class="no-print" style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
         <div>
           <div class="roster-title" id="rosterTitle" style="text-align:left;"></div>
@@ -266,7 +266,7 @@
   <!-- 전체 인쇄 보기 팝업(모달) -->
   <div id="printAllModalBackdrop" onclick="if (event.target === this) closePrintAllModal();"
        style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1001; align-items:center; justify-content:center; padding:20px;">
-    <div class="roster-modal-box" style="background:#fff; border-radius:10px; padding:20px; width:1100px; max-width:95vw; max-height:90vh; overflow:auto;">
+    <div class="roster-modal-box" style="background:#fff; border-radius:10px; padding:20px; width:1300px; max-width:95vw; max-height:90vh; overflow:auto;">
       <div class="no-print" style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
         <div class="roster-title" id="printAllTitle" style="text-align:left;"></div>
         <button class="secondary no-print" onclick="closePrintAllModal()" style="flex:none;">닫기 ✕</button>
@@ -822,6 +822,7 @@ function openRosterModal(batchId, key) {
 
   document.getElementById('rosterTableWrap').innerHTML = buildRosterTableHtml(batch.printTitle || DEFAULT_PRINT_TITLE, members);
   document.getElementById('rosterModalBackdrop').style.display = 'flex';
+  fitRosterTables(document.getElementById('rosterTableWrap'));
 }
 
 function closeRosterModal() {
@@ -846,6 +847,7 @@ function openPrintAllModal() {
     return '<div class="print-section">' + buildRosterTableHtml(g.title, g.members) + '</div>';
   }).join('');
   document.getElementById('printAllModalBackdrop').style.display = 'flex';
+  fitRosterTables(document.getElementById('printAllContent'));
 }
 
 function closePrintAllModal() {
@@ -886,6 +888,55 @@ function buildRosterTableHtml(title, members) {
     '<tr class="rt-head">' + head + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
 
+// 칸보다 넘치는 글씨를 한 칸 안에 다 들어오게 맞춤
+//  1순위: 그 열의 글자 크기를 줄임(최소 8pt)  /  2순위: 그래도 안 들어가는 칸(아주 긴 이름 등)만 두 줄로 나눠 넣음
+function fitRosterTables(root) {
+  (root || document).querySelectorAll('.roster-table').forEach(function (table) {
+    const body = table.tBodies[0];
+    if (!body) return;
+    const rows = body.rows;
+    const ncol = ROSTER_HEADERS.length;
+    const MIN_PT = 8;
+    const maxRatio = new Array(ncol).fill(1);
+    const ratios = [];
+    for (let r = 0; r < rows.length; r++) {            // 1) 측정만 (한 번에)
+      const cells = rows[r].cells;
+      const rr = new Array(ncol).fill(1);
+      for (let c = 0; c < ncol; c++) {
+        const td = cells[c];
+        if (!td || !td.clientWidth) continue;
+        rr[c] = td.scrollWidth / td.clientWidth;
+        if (rr[c] > maxRatio[c]) maxRatio[c] = rr[c];
+      }
+      ratios.push(rr);
+    }
+    for (let c = 0; c < ncol; c++) {                    // 2) 넘치는 열 처리
+      if (maxRatio[c] <= 1.001) continue;
+      const need = Math.floor((11 / maxRatio[c]) * 0.96 * 10) / 10;
+      if (need >= MIN_PT) {                              // 열 전체를 같은 크기로 살짝 줄이면 되는 경우
+        for (let r = 0; r < rows.length; r++) {
+          if (rows[r].cells[c]) rows[r].cells[c].style.fontSize = need + 'pt';
+        }
+      } else {                                           // 아주 긴 글씨가 섞여 있는 열: 넘치는 칸만 개별 처리 (나머지는 그대로)
+        for (let r = 0; r < rows.length; r++) {
+          const td = rows[r].cells[c];
+          const ratio = ratios[r][c];
+          if (!td || ratio <= 1.001) continue;
+          const own = Math.floor((11 / ratio) * 0.96 * 10) / 10;
+          if (own >= MIN_PT) {
+            td.style.fontSize = own + 'pt';
+          } else {                                       // 두 줄로 나눠서 넣기
+            td.style.whiteSpace = 'normal';
+            td.style.wordBreak = 'break-all';
+            td.style.lineHeight = '1.05';
+            td.style.fontSize = Math.min(9, Math.floor((11 / (ratio / 2)) * 0.93 * 10) / 10) + 'pt';
+          }
+        }
+      }
+    }
+  });
+}
+
 function triggerDownload(blob, filename) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -909,7 +960,7 @@ async function saveRosterXlsx(filename, title, members) {
       views: [{ state: 'frozen', ySplit: 3 }]
     });
     ws.columns = ROSTER_COL_WIDTHS.map(function (w) { return { width: w }; });
-    const center = { horizontal: 'center', vertical: 'middle' };
+    const center = { horizontal: 'center', vertical: 'middle', shrinkToFit: true };
     const thin = { style: 'thin' };
     const border = { top: thin, left: thin, bottom: thin, right: thin };
 
