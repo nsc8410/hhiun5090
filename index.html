@@ -194,7 +194,7 @@
 
   <!-- 자동 진단 대시보드 -->
   <div id="diagModalBackdrop" class="no-print" onclick="if (event.target === this) closeDiagModal();"
-       style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1000; align-items:center; justify-content:center; padding:20px;">
+       style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1003; align-items:center; justify-content:center; padding:20px;">
    <div id="autoDiagnosisPanel" style="background:#fff; border-radius:12px; padding:20px; width:1000px; max-width:95vw; max-height:90vh; overflow:auto;">
     <div class="diag-head">
       <div>
@@ -230,6 +230,21 @@
       <button class="secondary" onclick="closeDiagModal()" style="margin-left:auto;">닫기 ✕</button>
     </div>
    </div>
+  </div>
+
+  <!-- 연명부 검수 결과 팝업 -->
+  <div id="checkModalBackdrop" class="no-print" onclick="if (event.target === this) closeCheckModal();"
+       style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1003; align-items:center; justify-content:center; padding:20px;">
+    <div style="background:#fff; border-radius:12px; padding:20px; width:900px; max-width:95vw; max-height:90vh; overflow:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px;">
+        <div style="font-size:18px; font-weight:700; color:#1f3a73;">✅ 연명부 검수 <span style="font-size:12px; color:#888; font-weight:400;">(내가 만든 연명부 기준)</span></div>
+        <div style="display:flex; gap:8px;">
+          <button class="secondary" onclick="downloadAuditExcel()">📥 결과 엑셀 받기</button>
+          <button class="secondary" onclick="closeCheckModal()">닫기 ✕</button>
+        </div>
+      </div>
+      <div id="checkResult"></div>
+    </div>
   </div>
 
   <!-- 관리자 메뉴: 엑셀 업로드/다운로드 -->
@@ -312,7 +327,7 @@
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
       <div id="rosterFoldersHeading" style="font-weight:700; font-size:16px;"></div>
       <div style="display:flex; gap:8px;">
-        <button class="ghost" onclick="checkRosterCoverage()">✅ 검수 (중복·누락)</button>
+        <button class="ghost" onclick="checkRosterCoverage()">✅ 연명부 검수</button>
         <button onclick="openPrintAllModal()">🖨 전체 인쇄 (모든 묶음)</button>
         <button onclick="downloadAllExcel()">📊 전체 엑셀 (모든 묶음)</button>
         <button class="secondary" onclick="clearRosterFolders()">폴더 전체 지우기</button>
@@ -802,38 +817,106 @@ function planUpload(uploadedRows, current, mode) {
 /* ===================== 연명부 검수: 중복·누락 점검 ===================== */
 function personKey(m) { return m['사번'] ? String(m['사번']) : 'id:' + m.id; }
 
-function checkRosterCoverage() {
-  if (rosterBatches.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
+// 내가 만든 연명부를 기준으로 점검:
+//  - 투표구별로 만들었으면 "그 투표구 전체", 부서별로 만들었으면 "그 부서·투표구"가 점검 범위
+//  - 아직 만들지 않은 투표구/부서는 '누락'이 아니라 '아직 안 만듦'(참고)으로만 알려줌
+function rosterAudit() {
   const seen = {};
   let folderTotal = 0;
+  const distMade = {}, deptMade = {};
   rosterBatches.forEach(function (b) {
     Object.keys(b.groups).forEach(function (k) {
       b.groups[k].forEach(function (m) {
         folderTotal++;
-        (seen[personKey(m)] = seen[personKey(m)] || { m: m, where: [] }).where.push(b.voteName + ' / ' + b.groupMeta[k].label);
+        const pk = personKey(m);
+        (seen[pk] = seen[pk] || { m: m, where: [] }).where.push(b.voteName + ' / ' + (b.groupMeta[k] ? b.groupMeta[k].label : k));
+        if (b.groupBy === '부서') deptMade[(m['부서'] || '') + '|' + (m['투표구'] || '')] = true;
+        else distMade[m['투표구'] || ''] = true;
       });
     });
   });
-  const dups = Object.keys(seen).filter(function (k) { return seen[k].where.length > 1; }).map(function (k) { return seen[k]; });
-  const missing = allMembers.filter(function (m) { return !seen[personKey(m)]; });
-  const distinct = Object.keys(seen).length;
+  const keys = Object.keys(seen);
+  const dups = keys.filter(function (k) { return seen[k].where.length > 1; }).map(function (k) { return seen[k]; });
+  const inScope = function (m) {
+    return distMade[m['투표구'] || ''] || deptMade[(m['부서'] || '') + '|' + (m['투표구'] || '')];
+  };
+  const missing = allMembers.filter(function (m) { return !seen[personKey(m)] && inScope(m); });
+  const notMade = allMembers.filter(function (m) { return !seen[personKey(m)] && !inScope(m); });
+  const rows = {};
+  allMembers.forEach(function (m) {
+    const d = m['투표구'] || '(미배정)';
+    const r = rows[d] = rows[d] || { total: 0, made: 0, miss: 0 };
+    r.total++;
+    if (seen[personKey(m)]) r.made++; else if (inScope(m)) r.miss++;
+  });
+  return { seen: seen, folderTotal: folderTotal, distinct: keys.length, dups: dups, missing: missing, notMade: notMade, rows: rows };
+}
 
-  let msg = '[연명부 검수]\n' +
-    '· 전체 명단: ' + allMembers.length + '명\n' +
-    '· 연명부(폴더)에 들어간 사람: ' + distinct + '명 (폴더 인원 합계 ' + folderTotal + '명)\n' +
-    '· 중복 (두 폴더 이상에 들어간 사람): ' + dups.length + '명\n' +
-    '· 누락 (어느 폴더에도 안 들어간 사람): ' + missing.length + '명';
-  if (dups.length) msg += '\n\n중복: ' + namesPreview(dups, function (d) { return d.m['성명'] + '(' + d.where.join(' & ') + ')'; }, 6);
-  if (missing.length) msg += '\n\n누락: ' + namesPreview(missing, function (m) { return m['성명'] + '/' + m['부서'] + '/' + m['투표구'] + '투표구'; }, 12);
-  if (!dups.length && !missing.length) { alert(msg + '\n\n✅ 전체 명단이 빠짐없이, 한 번씩만 들어가 있습니다.'); return; }
-  if (confirm(msg + '\n\n중복·누락 명단을 엑셀 파일로 받을까요?')) {
-    const wb = XLSX.utils.book_new();
-    const head = ['사번', '성명', '사업본부', '부서', '과', '직위', '투표구'];
-    const row = function (m) { return [m['사번'], m['성명'], m['사업본부'], m['부서'], m['과'], m['직위'], m['투표구']]; };
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head.concat(['들어간 폴더'])].concat(dups.map(function (d) { return row(d.m).concat([d.where.join(' & ')]); }))), '중복');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head].concat(missing.map(row))), '누락');
-    XLSX.writeFile(wb, '연명부_검수결과_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+function auditStatusOf(r) {
+  if (r.made === 0) return { t: '─ 아직 안 만듦', c: '#888' };
+  if (r.miss > 0) return { t: '⚠ ' + r.miss + '명 빠짐', c: '#c92a2a' };
+  if (r.made === r.total) return { t: '✅ 전부 들어감', c: '#2b8a3e' };
+  return { t: '부서별로 일부만 만듦 (참고)', c: '#b7791f' };
+}
+
+function checkRosterCoverage() {
+  if (rosterBatches.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
+  const a = rosterAudit();
+  window.lastAudit = a;
+  const bad = a.dups.length > 0 || a.missing.length > 0;
+  const card = function (label, value, color) {
+    return '<div style="flex:1; min-width:150px; border:1px solid #e2e6ee; border-radius:10px; padding:10px 14px;">' +
+      '<div style="font-size:12px; color:#777;">' + label + '</div>' +
+      '<div style="font-size:24px; font-weight:700; color:' + color + ';">' + value + '</div></div>';
+  };
+  let html = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">' +
+    card('만든 연명부에 들어간 사람', a.distinct.toLocaleString() + '명', '#1f3a73') +
+    card('중복 (두 폴더 이상)', a.dups.length + '명', a.dups.length ? '#c92a2a' : '#2b8a3e') +
+    card('빠진 사람 (만든 범위 안)', a.missing.length + '명', a.missing.length ? '#c92a2a' : '#2b8a3e') +
+    card('아직 안 만든 인원 (참고)', a.notMade.length.toLocaleString() + '명', '#888') + '</div>';
+  html += bad
+    ? '<div style="background:#fde8e8; color:#a61e1e; padding:10px 14px; border-radius:8px; font-weight:700; margin-bottom:12px;">⚠ 확인이 필요합니다. 아래 명단을 봐 주세요.</div>'
+    : '<div style="background:#e6f6ec; color:#1e7a3c; padding:10px 14px; border-radius:8px; font-weight:700; margin-bottom:12px;">✅ 지금까지 만든 연명부는 빠짐없이, 한 번씩만 들어가 있습니다.' +
+      (a.notMade.length ? ' <span style="font-weight:400;">(아직 안 만든 ' + a.notMade.length.toLocaleString() + '명은 검수 대상이 아닙니다)</span>' : '') + '</div>';
+  if (a.dups.length) {
+    html += '<div style="font-weight:700; margin:10px 0 4px;">중복된 사람</div>' + a.dups.slice(0, 30).map(function (d) {
+      return '<div style="padding:4px 0; border-bottom:1px solid #eee;">' + escapeHtml(d.m['성명']) + ' <span style="color:#888;">(' + escapeHtml(d.m['부서']) + ')</span> — ' + escapeHtml(d.where.join(' & ')) + '</div>';
+    }).join('') + (a.dups.length > 30 ? '<div style="color:#888;">… 외 ' + (a.dups.length - 30) + '명 (엑셀로 전체 확인)</div>' : '');
   }
+  if (a.missing.length) {
+    html += '<div style="font-weight:700; margin:10px 0 4px;">만든 범위 안에서 빠진 사람</div>' + a.missing.slice(0, 30).map(function (m) {
+      return '<div style="padding:4px 0; border-bottom:1px solid #eee;">' + escapeHtml(m['성명']) + ' <span style="color:#888;">(' + escapeHtml(m['부서']) + ' / ' + escapeHtml(m['투표구']) + '투표구)</span></div>';
+    }).join('') + (a.missing.length > 30 ? '<div style="color:#888;">… 외 ' + (a.missing.length - 30) + '명 (엑셀로 전체 확인)</div>' : '');
+  }
+  const dKeys = Object.keys(a.rows).sort(function (x, y) { return String(x).localeCompare(String(y), 'ko', { numeric: true }); });
+  html += '<div style="font-weight:700; margin:14px 0 4px;">투표구별 현황</div><table style="width:100%; border-collapse:collapse; font-size:13px;">' +
+    '<tr style="background:#f1f4fa;"><th style="padding:6px; text-align:left;">투표구</th><th style="padding:6px; text-align:right;">명단</th><th style="padding:6px; text-align:right;">연명부</th><th style="padding:6px; text-align:left;">상태</th></tr>' +
+    dKeys.map(function (d) {
+      const r = a.rows[d], st = auditStatusOf(r);
+      return '<tr style="border-bottom:1px solid #eee;"><td style="padding:5px 6px;">' + escapeHtml(d) + '</td><td style="padding:5px 6px; text-align:right;">' + r.total + '명</td><td style="padding:5px 6px; text-align:right;">' + r.made + '명</td><td style="padding:5px 6px; color:' + st.c + '; font-weight:700;">' + st.t + '</td></tr>';
+    }).join('') + '</table>';
+  document.getElementById('checkResult').innerHTML = html;
+  document.getElementById('checkModalBackdrop').style.display = 'flex';
+}
+
+function closeCheckModal() {
+  const el = document.getElementById('checkModalBackdrop');
+  if (el) el.style.display = 'none';
+}
+
+// 결과 엑셀은 사용자가 버튼을 눌렀을 때만 받음
+function downloadAuditExcel() {
+  const a = window.lastAudit || rosterAudit();
+  const wb = XLSX.utils.book_new();
+  const head = ['사번', '성명', '사업본부', '부서', '과', '직위', '투표구'];
+  const row = function (m) { return [m['사번'], m['성명'], m['사업본부'], m['부서'], m['과'], m['직위'], m['투표구']]; };
+  const dKeys = Object.keys(a.rows).sort(function (x, y) { return String(x).localeCompare(String(y), 'ko', { numeric: true }); });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['투표구', '명단 인원', '연명부 인원', '빠진 인원', '상태']].concat(dKeys.map(function (d) {
+    const r = a.rows[d]; return [d, r.total, r.made, r.miss, auditStatusOf(r).t];
+  }))), '투표구별 현황');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head.concat(['들어간 폴더'])].concat(a.dups.map(function (d) { return row(d.m).concat([d.where.join(' & ')]); }))), '중복');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head].concat(a.missing.map(row))), '빠진 사람(만든 범위)');
+  XLSX.writeFile(wb, '연명부_검수결과_' + new Date().toISOString().slice(0, 10) + '.xlsx');
 }
 
 function showMoreRows(all) {
@@ -1531,7 +1614,7 @@ function closeDiagModal() {
   document.getElementById('diagModalBackdrop').style.display = 'none';
 }
 document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape') closeDiagModal();
+  if (e.key === 'Escape') { closeDiagModal(); closeCheckModal(); }
 });
 
 function diagText(v) {
@@ -1631,7 +1714,7 @@ function analyzeVoteData() {
   const masterKeys = {};
   allMembers.forEach(function (m) { masterKeys[personKey(m)] = true; });
   const rosterUnknown = Object.keys(rosterSeen).filter(function (k) { return !masterKeys[k]; });
-  const missingRoster = allMembers.filter(function (m) { return !rosterSeen[personKey(m)]; });
+  const missingRoster = rosterBatches.length ? rosterAudit().missing : []; // 만든 연명부 범위 안에서 빠진 사람만
   const lockedCount = Object.keys(lockedEmpids).length;
 
   const dataErrorCount =
@@ -1735,7 +1818,7 @@ function runAutoDiagnosis() {
     problems.push({level:'bad', label:'명단에 없는 연명부 인원', value:a.rosterUnknown.length + '명'});
   }
   if (rosterBatches.length && rosterMissing) {
-    problems.push({level:'warn', label:'아직 연명부에 없는 인원', value:rosterMissing + '명'});
+    problems.push({level:'warn', label:'만든 연명부 범위 안에서 빠진 인원', value:rosterMissing + '명'});
   }
   if (recCount) {
     problems.push({level:'warn', label:'확인 권장: 근무지·재직구분 빈칸 (연명부에는 포함) — ' + recNames, value:recCount + '명'});
