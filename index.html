@@ -236,6 +236,7 @@
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
       <div id="rosterFoldersHeading" style="font-weight:700; font-size:16px;"></div>
       <div style="display:flex; gap:8px;">
+        <button class="ghost" onclick="checkRosterCoverage()">✅ 검수 (중복·누락)</button>
         <button onclick="openPrintAllModal()">🖨 전체 인쇄 (모든 묶음)</button>
         <button onclick="downloadAllExcel()">📊 전체 엑셀 (모든 묶음)</button>
         <button class="secondary" onclick="clearRosterFolders()">폴더 전체 지우기</button>
@@ -637,6 +638,125 @@ function renderMembers() {
   }
   body.innerHTML = rows.join('');
   updateSelCount();
+}
+
+/* ===================== 명단 업로드 사전 점검 (중복·빈칸·바뀌는 사람 미리보기) ===================== */
+const DIFF_FIELDS = ['사업본부', '부서', '과', '직위', '성명', '근무지', '재직구분', '투표장소', '투표구'];
+
+function namesPreview(list, label, max) {
+  max = max || 10;
+  const shown = list.slice(0, max).map(label).join(', ');
+  return shown + (list.length > max ? ' 외 ' + (list.length - max) + '명' : '');
+}
+
+// 반영하기 전에 계산만 함 (현재 명단은 건드리지 않음)
+function planUpload(uploadedRows, current, mode) {
+  const blockers = [];
+  const idCount = {};
+  const noId = [], noDistrict = [];
+  uploadedRows.forEach(function (u) {
+    if (!u['사번']) { noId.push(u); return; }
+    idCount[u['사번']] = (idCount[u['사번']] || 0) + 1;
+    if (!u['투표구']) noDistrict.push(u);
+  });
+  const dupIds = Object.keys(idCount).filter(function (k) { return idCount[k] > 1; });
+  if (dupIds.length > 0) {
+    blockers.push('① 사번이 중복된 사람이 ' + dupIds.length + '건 있습니다 (같은 사람이 두 줄 이상):\n' +
+      namesPreview(dupIds, function (id) {
+        const who = uploadedRows.filter(function (u) { return u['사번'] === id; }).map(function (u) { return u['성명'] + '/' + u['부서']; }).join(' · ');
+        return id + '(' + who + ')';
+      }, 8));
+  }
+  if (noId.length > 0) blockers.push('② 사번이 비어있는 사람이 ' + noId.length + '명 있습니다: ' + namesPreview(noId, function (u) { return u['성명']; }));
+  if (noDistrict.length > 0) blockers.push('③ 투표구가 비어있는 사람이 ' + noDistrict.length + '명 있습니다: ' + namesPreview(noDistrict, function (u) { return u['성명']; }));
+
+  const byId = {};
+  current.forEach(function (m) { if (m['사번']) byId[m['사번']] = m; });
+  const upById = {};
+  uploadedRows.forEach(function (u) { if (u['사번']) upById[u['사번']] = u; });
+
+  const added = uploadedRows.filter(function (u) { return u['사번'] && !byId[u['사번']]; });
+  const changed = [];
+  uploadedRows.forEach(function (u) {
+    const e = u['사번'] && byId[u['사번']];
+    if (!e) return;
+    const diffs = DIFF_FIELDS.filter(function (f) { return String(e[f] || '') !== String(u[f] || ''); });
+    if (diffs.length > 0) changed.push({ u: u, e: e, diffs: diffs });
+  });
+  const removed = mode === 'replace' ? current.filter(function (m) { return m['사번'] && !upById[m['사번']]; }) : [];
+
+  const total = mode === 'replace' ? uploadedRows.length : current.length + added.length;
+  const lines = [];
+  lines.push((mode === 'replace' ? '[명단 전체 교체] ' : '[추가/병합] ') + '현재 ' + current.length + '명 → 반영 후 ' + total + '명');
+  lines.push('· 새로 추가되는 사람: ' + added.length + '명' + (added.length ? '  (' + namesPreview(added, function (u) { return u['성명'] + '/' + u['부서'] + '/' + u['투표구'] + '투표구'; }) + ')' : ''));
+  if (mode === 'replace') {
+    lines.push('· 명단에서 빠지는 사람: ' + removed.length + '명' + (removed.length ? '  (' + namesPreview(removed, function (m) { return m['성명'] + '/' + m['부서']; }) + ')' : ''));
+  } else {
+    lines.push('· 파일에 없는 기존 인원은 그대로 유지됩니다');
+  }
+  lines.push('· 정보가 바뀌는 사람: ' + changed.length + '명' + (changed.length ? '\n   ' + changed.slice(0, 8).map(function (c) {
+    return c.u['성명'] + ': ' + c.diffs.map(function (f) { return f + ' ' + (c.e[f] || '(빈칸)') + '→' + (c.u[f] || '(빈칸)'); }).join(', ');
+  }).join('\n   ') + (changed.length > 8 ? '\n   … 외 ' + (changed.length - 8) + '명' : '') : ''));
+  lines.push('· 사번 중복: 0건 / 사번·투표구 빈칸: 0명');
+
+  return {
+    blockers: blockers,
+    text: lines.join('\n'),
+    summary: mode === 'replace' ? '명단 전체 교체 (' + total + '명, 추가 ' + added.length + ' / 제외 ' + removed.length + ' / 변경 ' + changed.length + ')'
+                               : '추가/병합: 신규 ' + added.length + '명, 정보 갱신 ' + changed.length + '명 (전체 ' + total + '명)',
+    build: function () {
+      if (mode === 'replace') {
+        return uploadedRows.map(function (u, i) { const o = Object.assign({}, u); o.id = i + 1; return o; });
+      }
+      const copy = current.map(function (m) { return Object.assign({}, m); });
+      const idx = {};
+      copy.forEach(function (m) { if (m['사번']) idx[m['사번']] = m; });
+      let nextId = copy.reduce(function (mx, m) { return Math.max(mx, m.id || 0); }, 0) + 1;
+      uploadedRows.forEach(function (u) {
+        const e = idx[u['사번']];
+        if (e) { FIELDS.forEach(function (f) { e[f] = u[f]; }); }
+        else { const o = Object.assign({}, u); o.id = nextId++; copy.push(o); idx[o['사번']] = o; }
+      });
+      return copy;
+    }
+  };
+}
+
+/* ===================== 연명부 검수: 중복·누락 점검 ===================== */
+function personKey(m) { return m['사번'] ? String(m['사번']) : 'id:' + m.id; }
+
+function checkRosterCoverage() {
+  if (rosterBatches.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
+  const seen = {};
+  let folderTotal = 0;
+  rosterBatches.forEach(function (b) {
+    Object.keys(b.groups).forEach(function (k) {
+      b.groups[k].forEach(function (m) {
+        folderTotal++;
+        (seen[personKey(m)] = seen[personKey(m)] || { m: m, where: [] }).where.push(b.voteName + ' / ' + b.groupMeta[k].label);
+      });
+    });
+  });
+  const dups = Object.keys(seen).filter(function (k) { return seen[k].where.length > 1; }).map(function (k) { return seen[k]; });
+  const missing = allMembers.filter(function (m) { return !seen[personKey(m)]; });
+  const distinct = Object.keys(seen).length;
+
+  let msg = '[연명부 검수]\n' +
+    '· 전체 명단: ' + allMembers.length + '명\n' +
+    '· 연명부(폴더)에 들어간 사람: ' + distinct + '명 (폴더 인원 합계 ' + folderTotal + '명)\n' +
+    '· 중복 (두 폴더 이상에 들어간 사람): ' + dups.length + '명\n' +
+    '· 누락 (어느 폴더에도 안 들어간 사람): ' + missing.length + '명';
+  if (dups.length) msg += '\n\n중복: ' + namesPreview(dups, function (d) { return d.m['성명'] + '(' + d.where.join(' & ') + ')'; }, 6);
+  if (missing.length) msg += '\n\n누락: ' + namesPreview(missing, function (m) { return m['성명'] + '/' + m['부서'] + '/' + m['투표구'] + '투표구'; }, 12);
+  if (!dups.length && !missing.length) { alert(msg + '\n\n✅ 전체 명단이 빠짐없이, 한 번씩만 들어가 있습니다.'); return; }
+  if (confirm(msg + '\n\n중복·누락 명단을 엑셀 파일로 받을까요?')) {
+    const wb = XLSX.utils.book_new();
+    const head = ['사번', '성명', '사업본부', '부서', '과', '직위', '투표구'];
+    const row = function (m) { return [m['사번'], m['성명'], m['사업본부'], m['부서'], m['과'], m['직위'], m['투표구']]; };
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head.concat(['들어간 폴더'])].concat(dups.map(function (d) { return row(d.m).concat([d.where.join(' & ')]); }))), '중복');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head].concat(missing.map(row))), '누락');
+    XLSX.writeFile(wb, '연명부_검수결과_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+  }
 }
 
 function showMoreRows(all) {
@@ -1267,48 +1387,28 @@ async function handleExcelUpload() {
       uploadedRows.push(obj);
     }
 
-    let finalMembers, summary;
-
-    if (mode === 'replace') {
-      if (!confirm('저장소 명단을 이 엑셀 내용(' + uploadedRows.length + '명)으로 완전히 덮어씁니다. 기존에 있던 사람은 이 파일에 없으면 전부 사라집니다. 계속할까요?')) {
-        btn.disabled = false; btn.textContent = '업로드 및 저장소에 반영';
-        return;
-      }
-      finalMembers = uploadedRows.map(function (m, i) { m.id = i + 1; return m; });
-      summary = '명단 전체 교체 (' + finalMembers.length + '명)';
-    } else {
-      // 추가/병합: 사번이 같으면 정보 갱신, 없으면 신규 추가. 업로드 파일에 없는 기존 사람은 그대로 유지.
-      const byEmpid = {};
-      allMembers.forEach(function (m) { if (m['사번']) byEmpid[m['사번']] = m; });
-      let nextId = allMembers.reduce(function (mx, m) { return Math.max(mx, m.id || 0); }, 0) + 1;
-      let updated = 0, added = 0;
-
-      uploadedRows.forEach(function (u) {
-        const empid = u['사번'];
-        const existing = empid ? byEmpid[empid] : null;
-        if (existing) {
-          FIELDS.forEach(function (f) { existing[f] = u[f]; });
-          updated++;
-        } else {
-          u.id = nextId++;
-          allMembers.push(u);
-          if (empid) byEmpid[empid] = u;
-          added++;
-        }
-      });
-
-      finalMembers = allMembers;
-      summary = '추가/병합: 기존 정보 갱신 ' + updated + '명, 신규 추가 ' + added + '명 (전체 ' + finalMembers.length + '명)';
-      if (!confirm(summary + '\n저장소에 반영할까요?')) {
-        btn.disabled = false; btn.textContent = '업로드 및 저장소에 반영';
-        return;
-      }
+    // ----- 1) 파일 자체 점검: 사번 중복 / 사번·투표구 빈칸은 막음 -----
+    const plan = planUpload(uploadedRows, allMembers, mode);
+    if (plan.blockers.length > 0) {
+      alert('명단을 저장하지 않았습니다. 엑셀에서 아래 문제를 고친 뒤 다시 올려주세요.\n\n' + plan.blockers.join('\n\n'));
+      return;
     }
 
+    // ----- 2) 바뀌는 내용을 미리 보여주고 확인 (취소하면 아무것도 바뀌지 않음) -----
+    const folderCount = rosterBatches.reduce(function (n, b) { return n + Object.keys(b.groups).length; }, 0);
+    let msg = plan.text;
+    if (folderCount > 0) msg += '\n\n※ 이미 만들어 둔 연명부 폴더 ' + folderCount + '개와 🔒잠금은 이전 명단 기준이라 모두 초기화됩니다.';
+    if (!confirm(msg + '\n\n저장소에 반영할까요?')) return;
+
+    // ----- 3) 확인한 뒤에만 실제 반영 -----
+    const finalMembers = plan.build();
+    const summary = plan.summary;
     await ghPutJsonSafe('data/members.json', finalMembers, summary);
 
     allMembers = sortMembersByDept(finalMembers);
     selectedIds = {};
+    rosterBatches = []; currentBatchPage = 0; lockedEmpids = {}; lastRenderSig = '';
+    renderRosterFolders();
     ['locationFilter','districtFilter','deptFilter']
       .forEach(function (id) {
         const sel = document.getElementById(id);
