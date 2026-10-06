@@ -102,6 +102,40 @@
     .roster-sheet { width: 329mm; max-width: 100%; margin: 0 auto; }
     .roster-table { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
+
+  /* ===== 자동 진단 대시보드 ===== */
+  #autoDiagnosisPanel { border:1px solid #dbe2ef; background:linear-gradient(180deg,#fff,#f8faff); }
+  .diag-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  .diag-title { font-size:17px; font-weight:800; color:#243b6b; }
+  .diag-sub { font-size:12px; color:#777; margin-top:3px; }
+  .diag-grid { display:grid; grid-template-columns:repeat(5,minmax(130px,1fr)); gap:10px; margin:14px 0; }
+  .diag-card { border:1px solid #e1e5ec; border-radius:10px; padding:13px; background:#fff; min-height:82px; }
+  .diag-card .label { font-size:11px; color:#777; }
+  .diag-card .num { font-size:23px; font-weight:800; margin-top:4px; color:#222; }
+  .diag-card.ok .num { color:#188038; }
+  .diag-card.warn .num { color:#b26a00; }
+  .diag-card.bad .num { color:#c62828; }
+  .diag-status { border-radius:9px; padding:10px 12px; font-size:13px; font-weight:700; margin-top:8px; }
+  .diag-status.good { background:#eaf7ee; color:#176b35; }
+  .diag-status.warn { background:#fff6df; color:#8a5a00; }
+  .diag-status.bad { background:#fdeaea; color:#a51c1c; }
+  .diag-columns { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+  .diag-list { border:1px solid #e4e7ed; border-radius:9px; background:#fff; padding:10px 12px; }
+  .diag-list-title { font-weight:800; font-size:13px; margin-bottom:7px; }
+  .diag-item { display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px solid #f0f1f4; font-size:12px; }
+  .diag-item:last-child { border-bottom:0; }
+  .diag-item .badge { border-radius:12px; padding:2px 7px; font-weight:800; background:#f1f3f6; white-space:nowrap; }
+  .diag-item.bad .badge { background:#fdeaea; color:#c62828; }
+  .diag-item.warn .badge { background:#fff3d6; color:#8a5a00; }
+  .diag-item.ok .badge { background:#e6f4ea; color:#1a7f37; }
+  .diag-details { margin-top:8px; font-size:11px; line-height:1.6; color:#777; max-height:120px; overflow:auto; }
+  .diag-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .diag-actions button.primary-auto { background:#1769aa; }
+  @media (max-width:900px) {
+    .diag-grid { grid-template-columns:repeat(2,minmax(130px,1fr)); }
+    .diag-columns { grid-template-columns:1fr; }
+  }
+
 </style>
 </head>
 <body>
@@ -157,6 +191,42 @@
 <div class="wrap">
   <div id="globalError"></div>
   <div id="globalOk"></div>
+
+  <!-- 자동 진단 대시보드 -->
+  <div class="panel no-print" id="autoDiagnosisPanel">
+    <div class="diag-head">
+      <div>
+        <div class="diag-title">🩺 투표관리 자동 진단</div>
+        <div class="diag-sub" id="diagUpdated">명단을 불러오면 자동으로 분석합니다.</div>
+      </div>
+      <div class="diag-actions" style="margin-top:0;">
+        <button class="secondary" onclick="runAutoDiagnosis()">🔄 다시 진단</button>
+        <button class="primary-auto" onclick="autoGenerateRosters()">⚡ 전체 연명부 자동 생성</button>
+      </div>
+    </div>
+    <div class="diag-grid">
+      <div class="diag-card" id="diagTotalCard"><div class="label">전체 조합원</div><div class="num" id="diagTotal">-</div></div>
+      <div class="diag-card" id="diagValidCard"><div class="label">연명부 생성 가능</div><div class="num" id="diagValid">-</div></div>
+      <div class="diag-card" id="diagErrorCard"><div class="label">데이터 오류</div><div class="num" id="diagErrors">-</div></div>
+      <div class="diag-card" id="diagDupCard"><div class="label">사번 중복</div><div class="num" id="diagDup">-</div></div>
+      <div class="diag-card" id="diagRosterCard"><div class="label">연명부 누락</div><div class="num" id="diagMissingRoster">-</div></div>
+    </div>
+    <div id="diagStatus" class="diag-status good">분석 중...</div>
+    <div class="diag-columns">
+      <div class="diag-list">
+        <div class="diag-list-title">⚠️ 먼저 확인할 항목</div>
+        <div id="diagProblems"><div class="diag-details">진단 결과를 불러오는 중입니다.</div></div>
+      </div>
+      <div class="diag-list">
+        <div class="diag-list-title">📊 투표구·투표장소 현황</div>
+        <div id="diagDistribution"><div class="diag-details">진단 결과를 불러오는 중입니다.</div></div>
+      </div>
+    </div>
+    <div class="diag-actions">
+      <button class="secondary" onclick="downloadDiagnosisExcel()">📥 진단결과 엑셀</button>
+      <button class="secondary" onclick="focusDiagnosisProblems()">🔎 오류 대상만 보기</button>
+    </div>
+  </div>
 
   <!-- 관리자 메뉴: 엑셀 업로드/다운로드 -->
   <div class="panel no-print" id="adminPanel">
@@ -483,6 +553,7 @@ async function startApp() {
 
     buildFilterOptions();
     renderMembers();
+    runAutoDiagnosis();
   } catch (err) {
     showGlobalError(err.message + '\n\n(저장소에 data/members.json 파일이 있는지, 토큰 권한이 맞는지 확인해 주세요.)');
     document.getElementById('memberBody').innerHTML = '<tr><td colspan="11" class="loading">불러오기 실패</td></tr>';
@@ -880,6 +951,7 @@ function buildRoster() {
   currentBatchPage = Math.floor(rosterBatches.indexOf(batch) / BATCH_PAGE_SIZE);
 
   renderRosterFolders();
+  runAutoDiagnosis();
   document.getElementById('rosterFoldersPanel').scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -897,6 +969,7 @@ function clearRosterFolders() {
   rosterBatches = [];
   currentBatchPage = 0;
   renderRosterFolders();
+  runAutoDiagnosis();
 }
 
 function changeBatchPage(delta) {
@@ -1405,7 +1478,8 @@ async function handleExcelUpload() {
     const summary = plan.summary;
     await ghPutJsonSafe('data/members.json', finalMembers, summary);
 
-    allMembers = sortMembersByDept(finalMembers);
+    allMembers = finalMembers;
+    sortMembersByDept(allMembers);
     selectedIds = {};
     rosterBatches = []; currentBatchPage = 0; lockedEmpids = {}; lastRenderSig = '';
     renderRosterFolders();
@@ -1417,6 +1491,7 @@ async function handleExcelUpload() {
     buildFilterOptions();
     showAllForced = false;
     renderMembers();
+    runAutoDiagnosis();
     showGlobalOk(summary + ' — 저장소에 커밋되었습니다.');
   } catch (err) {
     showGlobalError(err.message);
@@ -1437,6 +1512,345 @@ function downloadFilteredExcel() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '명단');
   XLSX.writeFile(wb, '조합원명단_' + new Date().toISOString().slice(0,10) + '.xlsx');
+}
+
+
+/* ===================== 자동 진단 / 자동 연명부 ===================== */
+
+function diagText(v) {
+  return String(v == null ? '' : v).trim();
+}
+
+function diagEsc(v) {
+  return escapeHtml(v);
+}
+
+function analyzeVoteData() {
+  const total = allMembers.length;
+  const keyMap = {};
+  const duplicateKeys = {};
+  const fieldMissing = {};
+  FIELDS.forEach(function (f) { fieldMissing[f] = []; });
+
+  allMembers.forEach(function (m, idx) {
+    const key = diagText(m['사번']);
+    if (key) {
+      if (keyMap[key]) {
+        duplicateKeys[key] = duplicateKeys[key] || [keyMap[key]];
+        duplicateKeys[key].push(idx);
+      } else {
+        keyMap[key] = idx;
+      }
+    }
+    FIELDS.forEach(function (f) {
+      if (!diagText(m[f])) fieldMissing[f].push(idx);
+    });
+  });
+
+  const duplicateEmpids = Object.keys(duplicateKeys);
+  // 필수 항목: 비어 있으면 '오류'이고 자동 생성에서 제외됨 (근무지·재직구분은 아래 '확인 권장'으로 따로 경고만 함)
+  const criticalFields = ['사번','성명','부서','투표장소','투표구'];
+  const invalidMembers = allMembers.filter(function (m) {
+    return criticalFields.some(function (f) { return !diagText(m[f]); });
+  });
+
+  // 연명부에는 안 쓰이지만 입력 실수일 수 있어 알려주는 항목 (경고만 하고, 연명부에서는 제외하지 않음)
+  const recommendedFields = ['근무지','재직구분'];
+  const recommendMembers = allMembers.filter(function (m) {
+    return criticalFields.every(function (f) { return diagText(m[f]); }) &&
+      recommendedFields.some(function (f) { return !diagText(m[f]); });
+  });
+
+  // 같은 투표구가 여러 투표장소에 매핑되는지, 같은 투표장소에 여러 투표구가 매핑되는지 확인
+  const districtLocations = {};
+  const locationDistricts = {};
+  allMembers.forEach(function (m) {
+    const d = diagText(m['투표구']);
+    const l = diagText(m['투표장소']);
+    if (d && l) {
+      districtLocations[d] = districtLocations[d] || {};
+      districtLocations[d][l] = true;
+      locationDistricts[l] = locationDistricts[l] || {};
+      locationDistricts[l][d] = true;
+    }
+  });
+  const districtLocationIssues = Object.keys(districtLocations).filter(function (d) {
+    return Object.keys(districtLocations[d]).length > 1;
+  }).map(function (d) {
+    return { type:'district', key:d, values:Object.keys(districtLocations[d]) };
+  });
+  const locationDistrictIssues = Object.keys(locationDistricts).filter(function (l) {
+    return Object.keys(locationDistricts[l]).length > 1;
+  }).map(function (l) {
+    return { type:'location', key:l, values:Object.keys(locationDistricts[l]) };
+  });
+
+  // 투표구별 분포
+  const districtCounts = {};
+  const locationCounts = {};
+  allMembers.forEach(function (m) {
+    const d = diagText(m['투표구']) || '(미배정)';
+    const l = diagText(m['투표장소']) || '(미배정)';
+    districtCounts[d] = (districtCounts[d] || 0) + 1;
+    locationCounts[l] = (locationCounts[l] || 0) + 1;
+  });
+
+  // 연명부 현재 상태
+  const rosterSeen = {};
+  const rosterWhere = {};
+  let rosterTotal = 0;
+  rosterBatches.forEach(function (b) {
+    Object.keys(b.groups || {}).forEach(function (k) {
+      (b.groups[k] || []).forEach(function (m) {
+        const pk = personKey(m);
+        rosterTotal++;
+        rosterSeen[pk] = (rosterSeen[pk] || 0) + 1;
+        rosterWhere[pk] = rosterWhere[pk] || [];
+        rosterWhere[pk].push((b.voteName || '묶음') + ' / ' + ((b.groupMeta && b.groupMeta[k] && b.groupMeta[k].label) || k));
+      });
+    });
+  });
+  const rosterDuplicateKeys = Object.keys(rosterSeen).filter(function (k) { return rosterSeen[k] > 1; });
+  const masterKeys = {};
+  allMembers.forEach(function (m) { masterKeys[personKey(m)] = true; });
+  const rosterUnknown = Object.keys(rosterSeen).filter(function (k) { return !masterKeys[k]; });
+  const missingRoster = allMembers.filter(function (m) { return !rosterSeen[personKey(m)]; });
+  const lockedCount = Object.keys(lockedEmpids).length;
+
+  const dataErrorCount =
+    duplicateEmpids.length +
+    invalidMembers.length +
+    districtLocationIssues.length +
+    locationDistrictIssues.length;
+
+  const validForRoster = allMembers.filter(function (m) {
+    const pk = personKey(m);
+    return criticalFields.every(function (f) { return diagText(m[f]); }) &&
+      !rosterDuplicateKeys.includes(pk) &&
+      !duplicateEmpids.includes(diagText(m['사번'])) &&
+      !lockedEmpids[diagText(m['사번'])];
+  });
+
+  return {
+    total, keyMap, duplicateKeys, duplicateEmpids, fieldMissing, criticalFields, invalidMembers,
+    districtLocationIssues, locationDistrictIssues, districtCounts, locationCounts,
+    rosterSeen, rosterWhere, rosterTotal, rosterDuplicateKeys, rosterUnknown, missingRoster,
+    lockedCount, dataErrorCount, validForRoster, recommendedFields, recommendMembers
+  };
+}
+
+function diagCountBadge(type, count) {
+  const cls = count ? type : 'ok';
+  return '<span class="diag-item ' + cls + '"><span>' + '</span><span class="badge">' + count + '건</span></span>';
+}
+
+function renderDiagListItems(items) {
+  if (!items.length) return '<div class="diag-details">현재 자동으로 발견된 문제는 없습니다. 👍</div>';
+  return items.map(function (x) {
+    return '<div class="diag-item ' + (x.level || 'warn') + '"><span>' + diagEsc(x.label) + '</span><span class="badge">' + diagEsc(x.value) + '</span></div>';
+  }).join('');
+}
+
+function runAutoDiagnosis() {
+  if (!Array.isArray(allMembers)) return;
+  const a = analyzeVoteData();
+
+  const criticalMissing = a.invalidMembers.length;
+  const totalErrors = a.dataErrorCount;
+  const rosterMissing = a.missingRoster.length;
+  const rosterReady = a.validForRoster.length;
+  const recCount = a.recommendMembers.length;
+  const recNames = a.recommendMembers.slice(0, 8).map(function (m) { return m['성명']; }).join(', ') +
+    (recCount > 8 ? ' 외 ' + (recCount - 8) + '명' : '');
+
+  document.getElementById('diagTotal').textContent = a.total.toLocaleString();
+  document.getElementById('diagValid').textContent = rosterReady.toLocaleString();
+  document.getElementById('diagErrors').textContent = totalErrors.toLocaleString();
+  document.getElementById('diagDup').textContent = a.duplicateEmpids.length.toLocaleString();
+  document.getElementById('diagMissingRoster').textContent =
+    rosterBatches.length ? rosterMissing.toLocaleString() : '미생성';
+
+  ['diagTotalCard','diagValidCard','diagErrorCard','diagDupCard','diagRosterCard'].forEach(function(id) {
+    document.getElementById(id).classList.remove('ok','warn','bad');
+  });
+  document.getElementById('diagValidCard').classList.add(rosterReady === 0 ? 'warn' : 'ok');
+  document.getElementById('diagErrorCard').classList.add(totalErrors ? 'bad' : 'ok');
+  document.getElementById('diagDupCard').classList.add(a.duplicateEmpids.length ? 'bad' : 'ok');
+  document.getElementById('diagRosterCard').classList.add(!rosterBatches.length ? 'warn' : (rosterMissing ? 'warn' : 'ok'));
+
+  let statusClass = 'good';
+  let statusText = '정상입니다. 현재 명단으로 연명부를 생성할 수 있습니다.';
+  if (totalErrors) {
+    statusClass = 'bad';
+    statusText = '주의: 데이터 오류 ' + totalErrors + '건이 발견되었습니다. 오류를 먼저 확인하는 것을 권장합니다.';
+  } else if (rosterBatches.length && (rosterMissing || a.rosterDuplicateKeys.length)) {
+    statusClass = 'warn';
+    statusText = '연명부 검수가 필요합니다. 누락 ' + rosterMissing + '명 / 중복 ' + a.rosterDuplicateKeys.length + '명입니다.';
+  } else if (!rosterBatches.length) {
+    statusClass = 'warn';
+    statusText = '명단은 정상입니다. 아직 연명부가 생성되지 않았습니다. 「전체 연명부 자동 생성」을 눌러 시작할 수 있습니다.';
+  }
+  if (recCount && statusClass !== 'bad') {
+    if (statusClass === 'good') statusClass = 'warn';
+    statusText += ' [확인 권장] 근무지·재직구분이 비어 있는 ' + recCount + '명이 있습니다 (연명부에는 포함됩니다): ' + recNames;
+  }
+  const status = document.getElementById('diagStatus');
+  status.className = 'diag-status ' + statusClass;
+  status.textContent = statusText;
+
+  const problems = [];
+  if (a.duplicateEmpids.length) {
+    problems.push({level:'bad', label:'사번 중복', value:a.duplicateEmpids.length + '건'});
+  }
+  if (criticalMissing) {
+    problems.push({level:'bad', label:'필수정보 누락 행', value:criticalMissing + '명'});
+  }
+  if (a.districtLocationIssues.length) {
+    problems.push({level:'warn', label:'한 투표구에 여러 투표장소', value:a.districtLocationIssues.length + '건'});
+  }
+  if (a.locationDistrictIssues.length) {
+    problems.push({level:'warn', label:'한 투표장소에 여러 투표구', value:a.locationDistrictIssues.length + '건'});
+  }
+  if (a.rosterDuplicateKeys.length) {
+    problems.push({level:'bad', label:'연명부 중복', value:a.rosterDuplicateKeys.length + '명'});
+  }
+  if (a.rosterUnknown.length) {
+    problems.push({level:'bad', label:'명단에 없는 연명부 인원', value:a.rosterUnknown.length + '명'});
+  }
+  if (rosterBatches.length && rosterMissing) {
+    problems.push({level:'warn', label:'아직 연명부에 없는 인원', value:rosterMissing + '명'});
+  }
+  if (recCount) {
+    problems.push({level:'warn', label:'확인 권장: 근무지·재직구분 빈칸 (연명부에는 포함) — ' + recNames, value:recCount + '명'});
+  }
+  if (!problems.length) {
+    problems.push({level:'ok', label:'자동 발견된 오류 없음', value:'정상'});
+  }
+  document.getElementById('diagProblems').innerHTML = renderDiagListItems(problems);
+
+  const districtEntries = Object.keys(a.districtCounts).sort(function(x,y){
+    return String(x).localeCompare(String(y),'ko',{numeric:true});
+  });
+  const locationEntries = Object.keys(a.locationCounts).sort(function(x,y){
+    return String(x).localeCompare(String(y),'ko',{numeric:true});
+  });
+  let distHtml = '';
+  distHtml += '<div style="font-size:11px;color:#777;margin-bottom:5px;">투표구별</div>';
+  distHtml += districtEntries.map(function(k){
+    return '<div class="diag-item"><span>' + diagEsc(k) + '</span><span class="badge">' + a.districtCounts[k] + '명</span></div>';
+  }).join('');
+  distHtml += '<div style="font-size:11px;color:#777;margin:10px 0 5px;">투표장소별</div>';
+  distHtml += locationEntries.map(function(k){
+    return '<div class="diag-item"><span>' + diagEsc(k) + '</span><span class="badge">' + a.locationCounts[k] + '명</span></div>';
+  }).join('');
+  document.getElementById('diagDistribution').innerHTML = distHtml || '<div class="diag-details">자료 없음</div>';
+
+  document.getElementById('diagUpdated').textContent =
+    '마지막 진단: ' + new Date().toLocaleString('ko-KR') +
+    ' · 잠금 ' + a.lockedCount + '명 · 생성된 연명부 ' + rosterBatches.length + '묶음';
+
+  window.lastDiagnosis = a;
+}
+
+function autoGenerateRosters() {
+  if (!allMembers.length) {
+    alert('조합원 명단이 없습니다.');
+    return;
+  }
+  const a = analyzeVoteData();
+  const invalid = a.invalidMembers.length + a.duplicateEmpids.length + a.districtLocationIssues.length;
+  const candidates = a.validForRoster.filter(function(m) {
+    return diagText(m['투표구']) && !lockedEmpids[diagText(m['사번'])];
+  });
+  if (!candidates.length) {
+    alert('자동 생성할 수 있는 인원이 없습니다. 자동 진단 결과를 확인해 주세요.');
+    return;
+  }
+
+  let voteName = document.getElementById('voteName').value.trim();
+  if (!voteName) {
+    voteName = '2026년 통합 단체교섭 의견일치안 찬반투표';
+    document.getElementById('voteName').value = voteName;
+  }
+  document.querySelector('input[name="groupBy"][value="투표구"]').checked = true;
+  rosterGroupBy = '투표구';
+
+  const problemText = invalid
+    ? '\n\n※ 현재 데이터 오류 ' + invalid + '건이 있어 오류 대상은 자동 제외됩니다.'
+    : '';
+  const recText = a.recommendMembers.length
+    ? '\n\n※ 근무지·재직구분이 비어 있는 ' + a.recommendMembers.length + '명도 연명부에 포함됩니다.'
+    : '';
+  if (!confirm('투표구별로 자동 연명부를 생성합니다.\n\n대상: ' + candidates.length + '명\n제외: ' + (allMembers.length - candidates.length) + '명 (이미 생성·오류·중복 등)' + problemText + recText + '\n\n진행할까요?')) return;
+
+  selectedIds = {};
+  candidates.forEach(function(m) { if (m.id != null) selectedIds[m.id] = true; });
+
+  // 기존 수동 생성 함수를 그대로 사용하여 폴더/잠금/정렬/인쇄 기능을 동일하게 유지
+  buildRoster();
+  showGlobalOk('투표구별 자동 연명부 생성이 완료되었습니다. 총 ' + candidates.length + '명입니다.');
+}
+
+function focusDiagnosisProblems() {
+  const a = analyzeVoteData();
+  const badKeys = {};
+  a.duplicateEmpids.forEach(function(k){ badKeys[k] = true; });
+  a.invalidMembers.forEach(function(m){ badKeys[personKey(m)] = true; });
+  const first = allMembers.find(function(m){ return badKeys[personKey(m)]; });
+  if (!first) {
+    alert('현재 자동으로 표시할 오류 대상이 없습니다.');
+    return;
+  }
+  const search = document.getElementById('searchBox');
+  search.value = diagText(first['성명']);
+  showAllForced = true;
+  selectedIds = {};
+  renderMembers();
+  document.querySelector('.memberTable').scrollIntoView({behavior:'smooth'});
+}
+
+function downloadDiagnosisExcel() {
+  const a = analyzeVoteData();
+  const rows = [];
+
+  a.duplicateEmpids.forEach(function(k){
+    const idxs = a.duplicateKeys[k] || [];
+    idxs.forEach(function(idx){
+      const m = allMembers[idx] || {};
+      rows.push({오류유형:'사번 중복', 사번:m['사번']||'', 성명:m['성명']||'', 부서:m['부서']||'', 투표장소:m['투표장소']||'', 투표구:m['투표구']||'', 상세:'같은 사번이 여러 행에 존재'});
+    });
+  });
+  a.invalidMembers.forEach(function(m){
+    const missing = a.criticalFields.filter(function(f){ return !diagText(m[f]); }).join(', ');
+    rows.push({오류유형:'필수정보 누락', 사번:m['사번']||'', 성명:m['성명']||'', 부서:m['부서']||'', 투표장소:m['투표장소']||'', 투표구:m['투표구']||'', 상세:'누락: ' + missing});
+  });
+  a.districtLocationIssues.forEach(function(x){
+    rows.push({오류유형:'투표구-장소 불일치', 사번:'', 성명:'', 부서:'', 투표장소:x.values.join(', '), 투표구:x.key, 상세:'하나의 투표구에 여러 장소가 연결됨'});
+  });
+  a.locationDistrictIssues.forEach(function(x){
+    rows.push({오류유형:'장소-투표구 불일치', 사번:'', 성명:'', 부서:'', 투표장소:x.key, 투표구:x.values.join(', '), 상세:'하나의 투표장소에 여러 투표구가 연결됨'});
+  });
+  a.rosterDuplicateKeys.forEach(function(k){
+    const m = allMembers.find(function(x){ return personKey(x) === k; }) || {};
+    rows.push({오류유형:'연명부 중복', 사번:m['사번']||k, 성명:m['성명']||'', 부서:m['부서']||'', 투표장소:m['투표장소']||'', 투표구:m['투표구']||'', 상세:(a.rosterWhere[k]||[]).join(' / ')});
+  });
+  a.rosterUnknown.forEach(function(k){
+    rows.push({오류유형:'기준명단 미존재', 사번:k, 성명:'', 부서:'', 투표장소:'', 투표구:'', 상세:'현재 기준 명단에서 찾을 수 없음'});
+  });
+  a.missingRoster.forEach(function(m){
+    rows.push({오류유형:'연명부 누락', 사번:m['사번']||'', 성명:m['성명']||'', 부서:m['부서']||'', 투표장소:m['투표장소']||'', 투표구:m['투표구']||'', 상세:'아직 생성된 연명부에 포함되지 않음'});
+  });
+
+  a.recommendMembers.forEach(function(m){
+    const missing = a.recommendedFields.filter(function(f){ return !diagText(m[f]); }).join(', ');
+    rows.push({오류유형:'확인 권장(연명부에는 포함)', 사번:m['사번']||'', 성명:m['성명']||'', 부서:m['부서']||'', 투표장소:m['투표장소']||'', 투표구:m['투표구']||'', 상세:'비어 있음: ' + missing});
+  });
+
+  if (!rows.length) rows.push({오류유형:'정상', 사번:'', 성명:'', 부서:'', 투표장소:'', 투표구:'', 상세:'자동 진단에서 오류가 발견되지 않았습니다.'});
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '자동진단');
+  XLSX.writeFile(wb, '투표관리_자동진단_' + new Date().toISOString().slice(0,10) + '.xlsx');
 }
 
 /* ===================== 유틸 ===================== */
