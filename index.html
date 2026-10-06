@@ -89,7 +89,7 @@
 
   @media print {
     body { background: #fff; padding: 0; }
-    .no-print { display: none !important; }
+    .no-print, .ok-box, .error-box, #globalOk, #globalError { display: none !important; }
     .wrap { max-width: none !important; margin: 0 !important; padding: 0 !important; }
     /* 모달이 열려있을 때(JS가 display:flex로 바꿔둔 상태)만 인쇄 레이아웃을 정리함.
        닫혀있는(display:none) 모달까지 강제로 보이게 하지는 않음. 여러 장으로 넘어가도 잘리지 않게 block으로 바꿈 */
@@ -235,11 +235,12 @@
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
       <div id="rosterFoldersHeading" style="font-weight:700; font-size:16px;"></div>
       <div style="display:flex; gap:8px;">
-        <button onclick="openPrintAllModal()">전체 인쇄 보기 (한 번에)</button>
+        <button onclick="openPrintAllModal()">🖨 전체 인쇄 (모든 묶음)</button>
+        <button onclick="downloadAllExcel()">📊 전체 엑셀 (모든 묶음)</button>
         <button class="secondary" onclick="clearRosterFolders()">폴더 전체 지우기</button>
       </div>
     </div>
-    <div class="sub" style="margin:4px 0 10px;">폴더를 클릭하면 그 명단 하나만 확인·인쇄·다운로드할 수 있고, "전체 인쇄 보기"를 누르면 전체 폴더를 부서(또는 투표구)마다 새 페이지로 나눠서 한 번에 인쇄할 수 있습니다. 새로 "연명부 생성"을 누르면 기존 폴더에 이어서 추가됩니다.</div>
+    <div class="sub" style="margin:4px 0 10px;">폴더를 클릭하면 그 명단 하나만 확인·인쇄·다운로드할 수 있습니다. 각 묶음(박스)의 "이 묶음 전체 인쇄 / 전체 엑셀"은 그 박스 안 폴더를 전부, 위쪽 "전체 인쇄 / 전체 엑셀"은 모든 묶음을 한 번에 처리합니다(폴더마다 새 페이지·새 시트). 새로 "연명부 생성"을 누르면 기존 폴더에 이어서 추가됩니다.</div>
     <div id="rosterFolders"></div>
   </div>
 
@@ -744,6 +745,16 @@ function changeBatchPage(delta) {
   renderRosterFolders();
 }
 
+// 묶음 안의 폴더 정렬: 투표구 번호 순 → 같은 투표구 안에서는 부서명 순 (부서별로 만들어도 투표구가 섞이지 않게)
+function sortedGroupKeys(batch) {
+  return Object.keys(batch.groups).sort(function (a, b) {
+    const ma = batch.groupMeta[a], mb = batch.groupMeta[b];
+    const d = String(ma.district || '').localeCompare(String(mb.district || ''), 'ko', { numeric: true });
+    if (d !== 0) return d;
+    return String(ma.dept || ma.label).localeCompare(String(mb.dept || mb.label), 'ko', { numeric: true });
+  });
+}
+
 function renderRosterFolders() {
   const panel = document.getElementById('rosterFoldersPanel');
   const foldersEl = document.getElementById('rosterFolders');
@@ -767,9 +778,7 @@ function renderRosterFolders() {
     '연명부 — 총 ' + rosterBatches.length + '개 묶음 (폴더 ' + totalFolders + '개)';
 
   let html = pageBatches.map(function (batch) {
-    const keys = Object.keys(batch.groups).sort(function (a, b) {
-      return batch.groupMeta[a].label.localeCompare(batch.groupMeta[b].label, 'ko', { numeric: true });
-    });
+    const keys = sortedGroupKeys(batch);
     const totalInBatch = keys.reduce(function (s, k) { return s + batch.groups[k].length; }, 0);
 
     const folderButtons = keys.map(function (k) {
@@ -782,8 +791,13 @@ function renderRosterFolders() {
 
     return (
       '<div style="border:1px solid #e2e6ee; border-radius:10px; padding:14px; margin-bottom:14px;">' +
-      '<div style="font-weight:700; font-size:15px; margin-bottom:8px; color:#2f4f8f;">' +
+      '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">' +
+      '<div style="font-weight:700; font-size:15px; color:#2f4f8f;">' +
       escapeHtml(batch.voteName) + ' — 폴더 ' + keys.length + '개 (총 ' + totalInBatch + '명)</div>' +
+      '<div style="display:flex; gap:6px;">' +
+      '<button type="button" class="ghost" onclick="openPrintAllModal(\'' + batch.id + '\')">이 묶음 전체 인쇄</button>' +
+      '<button type="button" class="ghost" onclick="downloadAllExcel(\'' + batch.id + '\')">이 묶음 전체 엑셀</button>' +
+      '</div></div>' +
       '<div style="display:flex; flex-wrap:wrap; gap:10px;">' + folderButtons + '</div>' +
       '</div>'
     );
@@ -830,19 +844,18 @@ function closeRosterModal() {
 }
 
 /* ===================== 전체 인쇄 보기 (만들어둔 모든 묶음·폴더를 한 번에, 하나마다 새 페이지) ===================== */
-function openPrintAllModal() {
+function openPrintAllModal(batchId) {
+  const batches = batchId ? rosterBatches.filter(function (b) { return b.id === batchId; }) : rosterBatches;
   const allGroups = [];
-  rosterBatches.forEach(function (batch) {
-    const keys = Object.keys(batch.groups).sort(function (a, b) {
-      return batch.groupMeta[a].label.localeCompare(batch.groupMeta[b].label, 'ko', { numeric: true });
-    });
-    keys.forEach(function (k) {
+  batches.forEach(function (batch) {
+    sortedGroupKeys(batch).forEach(function (k) {
       allGroups.push({ title: batch.printTitle || DEFAULT_PRINT_TITLE, members: batch.groups[k], label: batch.groupMeta[k].label });
     });
   });
   if (allGroups.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
 
-  document.getElementById('printAllTitle').textContent = '전체 연명부 인쇄 — 총 ' + allGroups.length + '개';
+  document.getElementById('printAllTitle').textContent =
+    (batchId ? batches[0].voteName + ' 전체 인쇄' : '전체 연명부 인쇄') + ' — 총 ' + allGroups.length + '개';
   document.getElementById('printAllContent').innerHTML = allGroups.map(function (g) {
     return '<div class="print-section">' + buildRosterTableHtml(g.title, g.members) + '</div>';
   }).join('');
@@ -948,73 +961,125 @@ function triggerDownload(blob, filename) {
 
 // 엑셀 파일 만들기: ExcelJS가 로드되어 있으면 "진짜_최종.xlsx"와 같은 서식(제목줄·테두리·글꼴·행높이·A3 가로 인쇄설정)으로,
 // 못 불러왔으면 서식 없는 기본 엑셀로 저장
-async function saveRosterXlsx(filename, title, members) {
-  if (window.ExcelJS) {
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('연명부', {
-      pageSetup: {
-        paperSize: 8, orientation: 'landscape', horizontalCentered: true, scale: 100,
-        margins: { left: 0, right: 0, top: 0, bottom: 0, header: 0, footer: 0 },
-        printTitlesRow: '1:3'
-      },
-      views: [{ state: 'frozen', ySplit: 3 }]
-    });
-    ws.columns = ROSTER_COL_WIDTHS.map(function (w) { return { width: w }; });
-    const center = { horizontal: 'center', vertical: 'middle', shrinkToFit: true };
-    const thin = { style: 'thin' };
-    const border = { top: thin, left: thin, bottom: thin, right: thin };
+// 한 장(시트)을 "진짜_최종.xlsx" 서식으로 채움
+function addRosterSheet(wb, sheetName, title, members) {
+  const ws = wb.addWorksheet(sheetName, {
+    pageSetup: {
+      paperSize: 8, orientation: 'landscape', horizontalCentered: true, scale: 100,
+      margins: { left: 0, right: 0, top: 0, bottom: 0, header: 0, footer: 0 },
+      printTitlesRow: '1:3'
+    },
+    views: [{ state: 'frozen', ySplit: 3 }]
+  });
+  ws.columns = ROSTER_COL_WIDTHS.map(function (w) { return { width: w }; });
+  const center = { horizontal: 'center', vertical: 'middle', shrinkToFit: true };
+  const thin = { style: 'thin' };
+  const border = { top: thin, left: thin, bottom: thin, right: thin };
 
-    ws.mergeCells('A1:J1');
-    const t = ws.getCell('A1');
-    t.value = title;
-    t.font = { name: 'HY헤드라인M', size: 22, bold: true };
-    t.alignment = center;
-    ws.getRow(1).height = 39.75;
-    ws.getRow(2).height = 24.95;
+  ws.mergeCells('A1:J1');
+  const t = ws.getCell('A1');
+  t.value = title;
+  t.font = { name: 'HY헤드라인M', size: 22, bold: true };
+  t.alignment = center;
+  ws.getRow(1).height = 39.75;
+  ws.getRow(2).height = 24.95;
 
-    const hr = ws.getRow(3);
-    hr.height = 30;
-    ROSTER_HEADERS.forEach(function (h, i) {
-      const c = hr.getCell(i + 1);
-      c.value = h;
-      c.font = { name: '새굴림', size: 14, bold: true };
+  const hr = ws.getRow(3);
+  hr.height = 30;
+  ROSTER_HEADERS.forEach(function (h, i) {
+    const c = hr.getCell(i + 1);
+    c.value = h;
+    c.font = { name: '새굴림', size: 14, bold: true };
+    c.alignment = center;
+    c.border = border;
+  });
+
+  members.forEach(function (m, idx) {
+    const r = 4 + idx;
+    const row = ws.getRow(r);
+    row.height = 27.95;
+    rosterCells(m, idx).forEach(function (v, i) {
+      const c = row.getCell(i + 1);
+      if (i === 0) {
+        c.value = { formula: 'SUBTOTAL(3,$B$4:B' + r + ')', result: idx + 1 };
+      } else if ((i === 1 || i === 5) && /^\d+$/.test(String(v))) {
+        c.value = Number(v); // 투표구·숫자 사번은 마스터 파일처럼 숫자로
+      } else {
+        c.value = v === '' ? null : v;
+      }
+      c.font = { name: '새굴림', size: 11 };
       c.alignment = center;
       c.border = border;
     });
+  });
+  if (members.length > 0) ws.autoFilter = 'A3:J' + (3 + members.length);
+  return ws;
+}
 
-    members.forEach(function (m, idx) {
-      const r = 4 + idx;
-      const row = ws.getRow(r);
-      row.height = 27.95;
-      const vals = rosterCells(m, idx);
-      vals.forEach(function (v, i) {
-        const c = row.getCell(i + 1);
-        if (i === 0) {
-          c.value = { formula: 'SUBTOTAL(3,$B$4:B' + r + ')', result: idx + 1 };
-        } else if ((i === 1 || i === 5) && /^\d+$/.test(String(v))) {
-          c.value = Number(v); // 투표구·숫자 사번은 마스터 파일처럼 숫자로
-        } else {
-          c.value = v === '' ? null : v;
-        }
-        c.font = { name: '새굴림', size: 11 };
-        c.alignment = center;
-        c.border = border;
-      });
-    });
-    if (members.length > 0) ws.autoFilter = 'A3:J' + (3 + members.length);
+// 엑셀 시트 이름 규칙(31자 이내, \ / ? * [ ] : 금지, 중복 금지)에 맞게 정리
+function uniqueSheetName(name, used) {
+  let base = String(name).replace(/[\\\/?*\[\]:]/g, '_').replace(/^'+|'+$/g, '').trim().slice(0, 31) || '연명부';
+  let candidate = base, n = 2;
+  while (used[candidate]) {
+    const suffix = ' (' + n++ + ')';
+    candidate = base.slice(0, 31 - suffix.length) + suffix;
+  }
+  used[candidate] = true;
+  return candidate;
+}
 
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+// 시트 여러 장짜리 엑셀 한 파일로 저장: sheets = [{ name, title, members }]
+async function saveRosterWorkbook(filename, sheets) {
+  const used = {};
+  if (window.ExcelJS) {
+    const wb = new ExcelJS.Workbook();
+    sheets.forEach(function (sh) { addRosterSheet(wb, uniqueSheetName(sh.name, used), sh.title, sh.members); });
     const buf = await wb.xlsx.writeBuffer();
-    triggerDownload(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), filename);
+    triggerDownload(new Blob([buf], { type: XLSX_MIME }), filename);
     return;
   }
   // 대체 방식(서식 없음)
-  const aoa = [[title], [], ROSTER_HEADERS].concat(members.map(rosterCells));
-  const ws2 = XLSX.utils.aoa_to_sheet(aoa);
-  ws2['!cols'] = ROSTER_COL_WIDTHS.map(function (w) { return { wch: w }; });
-  ws2['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 9 } }];
   const wb2 = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb2, ws2, '연명부');
+  sheets.forEach(function (sh) {
+    const aoa = [[sh.title], [], ROSTER_HEADERS].concat(sh.members.map(rosterCells));
+    const ws2 = XLSX.utils.aoa_to_sheet(aoa);
+    ws2['!cols'] = ROSTER_COL_WIDTHS.map(function (w) { return { wch: w }; });
+    ws2['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 9 } }];
+    XLSX.utils.book_append_sheet(wb2, ws2, uniqueSheetName(sh.name, used));
+  });
   XLSX.writeFile(wb2, filename);
+}
+
+// 엑셀 한 장짜리 파일 저장
+async function saveRosterXlsx(filename, title, members) {
+  await saveRosterWorkbook(filename, [{ name: '연명부', title: title, members: members }]);
+}
+
+// 전체 엑셀: 폴더 하나당 시트 한 장, 파일 하나. (묶음을 지정하면 그 묶음만, 아니면 모든 묶음)
+async function downloadAllExcel(batchId) {
+  const batches = batchId ? rosterBatches.filter(function (b) { return b.id === batchId; }) : rosterBatches;
+  const sheets = [];
+  batches.forEach(function (batch) {
+    sortedGroupKeys(batch).forEach(function (k) {
+      sheets.push({
+        name: String(sheets.length + 1).padStart(2, '0') + '_' + batch.groupMeta[k].label,
+        title: batch.printTitle || DEFAULT_PRINT_TITLE,
+        members: batch.groups[k]
+      });
+    });
+  });
+  if (sheets.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
+  const filename = batchId
+    ? safeFileName(batches[0].voteName) + '_전체_연명부.xlsx'
+    : '연명부_전체_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+  try {
+    await saveRosterWorkbook(filename, sheets);
+    showGlobalOk('전체 엑셀 저장 완료: 시트 ' + sheets.length + '장 (' + filename + ')');
+  } catch (err) {
+    alert('전체 엑셀 만들기 중 오류: ' + err.message);
+  }
 }
 
 function getCurrentBatch() {
