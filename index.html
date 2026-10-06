@@ -190,9 +190,10 @@
     <div class="controls">
       <button class="secondary" onclick="selectAllVisible(true)">보이는 인원 전체선택</button>
       <button class="secondary" onclick="selectAllVisible(false)">선택 해제</button>
-      <button class="secondary" id="showAllBtn" onclick="forceShowAll()">전체 인원 표시 (느릴 수 있음)</button>
+      <button class="secondary" id="showAllBtn" onclick="forceShowAll()">전체 인원 표시</button>
       <button class="secondary" onclick="unlockAllMembers()" title="연명부로 뽑혀서 잠긴 사람들을 전부 풀어줍니다. 그날 인쇄가 다 끝난 뒤에 누르세요.">🔒 잠금 초기화</button>
       <span id="selCount" class="count-badge">선택 0명</span>
+      <span id="listInfo" style="font-size:12px; color:#888; margin-left:6px;"></span>
     </div>
 
     <div class="memberTable">
@@ -444,6 +445,9 @@ function sortMembersByDept(list) {
   return list;
 }
 let selectedIds = {};
+let renderLimit = 300;      // 명단 표에 한 번에 그리는 최대 인원 (많이 그릴수록 느려짐)
+const RENDER_STEP = 500;
+let lastRenderSig = '';
 let lockedEmpids = {}; // 이미 연명부로 뽑힌(생성된) 사람의 사번 — 중복 선택 방지용
 let showAllForced = false;
 
@@ -575,25 +579,35 @@ function forceShowAll() { showAllForced = true; renderMembers(); }
 
 function renderMembers() {
   const body = document.getElementById('memberBody');
+  const info = document.getElementById('listInfo');
 
   if (!hasActiveFilter() && !showAllForced) {
     body.innerHTML =
       '<tr><td colspan="11"><div class="hint-box">전체 ' + allMembers.length + '명입니다. ' +
       '검색어를 입력하거나 위 필터를 선택해 인원을 좁혀보세요.<br>' +
       '(전체 인원을 다 보시려면 "전체 인원 표시" 버튼을 눌러주세요.)</div></td></tr>';
+    if (info) info.textContent = '';
     updateSelCount();
     return;
   }
 
   const list = filteredMembers();
+  if (info) info.textContent = '조건에 맞는 인원 ' + list.length + '명';
   if (list.length === 0) {
     body.innerHTML = '<tr><td colspan="11" class="loading">조건에 맞는 조합원이 없습니다.</td></tr>';
     updateSelCount();
     return;
   }
 
+  // 검색어/필터가 바뀌면 처음 300명부터 다시 보여줌 (잠금 해제 등 다른 이유로 다시 그릴 땐 보던 위치 유지)
+  const sig = [document.getElementById('searchBox').value, FILTER_FIELDS.map(function (f) {
+    return document.getElementById(FILTER_SELECT_IDS[f]).value; }).join('|'), showAllForced].join('#');
+  if (sig !== lastRenderSig) { lastRenderSig = sig; renderLimit = 300; }
+
+  const shown = Math.min(list.length, renderLimit);
   const rows = [];
-  list.forEach(function (m) {
+  for (let i = 0; i < shown; i++) {
+    const m = list[i];
     const locked = m['사번'] && lockedEmpids[m['사번']];
     const checked = selectedIds[m.id] ? 'checked' : '';
     const disabledAttr = locked ? 'disabled' : '';
@@ -601,7 +615,7 @@ function renderMembers() {
     const lockedBadge = locked ? ' <span title="이미 연명부로 뽑힌 사람입니다" style="color:#c92a2a;">🔒</span>' : '';
     rows.push(
       '<tr' + rowStyle + '>' +
-      '<td><input type="checkbox" ' + checked + ' ' + disabledAttr + ' onchange="toggleSelect(' + m.id + ', this.checked)"></td>' +
+      '<td><input type="checkbox" data-id="' + m.id + '" ' + checked + ' ' + disabledAttr + '></td>' +
       '<td>' + escapeHtml(m['성명']) + lockedBadge + '</td>' +
       '<td>' + escapeHtml(m['사업본부']) + '</td>' +
       '<td>' + escapeHtml(m['부서']) + '</td>' +
@@ -614,10 +628,33 @@ function renderMembers() {
       '<td>' + escapeHtml(m['투표구']) + '</td>' +
       '</tr>'
     );
-  });
+  }
+  if (list.length > shown) {
+    rows.push('<tr><td colspan="11"><div class="hint-box">화면에는 ' + shown + '명만 그렸습니다 (나머지 ' + (list.length - shown) + '명). ' +
+      '<b>"보이는 인원 전체선택"과 연명부 생성은 조건에 맞는 ' + list.length + '명 전부에 적용됩니다.</b><br><br>' +
+      '<button type="button" class="secondary" onclick="showMoreRows(false)">더 보기 (+' + RENDER_STEP + '명)</button> ' +
+      '<button type="button" class="secondary" onclick="showMoreRows(true)">전부 보기</button></div></td></tr>');
+  }
   body.innerHTML = rows.join('');
   updateSelCount();
 }
+
+function showMoreRows(all) {
+  renderLimit = all ? Number.MAX_SAFE_INTEGER : renderLimit + RENDER_STEP;
+  renderMembers();
+}
+
+// 표를 다시 그리지 않고, 이미 그려진 체크박스의 체크 표시만 현재 선택 상태에 맞춰 바꿈 (빠름)
+function syncCheckboxes() {
+  const boxes = document.querySelectorAll('#memberBody input[type="checkbox"][data-id]');
+  for (let i = 0; i < boxes.length; i++) boxes[i].checked = !!selectedIds[boxes[i].dataset.id];
+}
+
+// 체크박스마다 이벤트를 붙이지 않고 표 전체에 한 번만 붙임
+document.getElementById('memberBody').addEventListener('change', function (e) {
+  const t = e.target;
+  if (t && t.dataset && t.dataset.id !== undefined && t.type === 'checkbox') toggleSelect(Number(t.dataset.id), t.checked);
+});
 
 function toggleSelect(id, checked) {
   if (checked) selectedIds[id] = true; else delete selectedIds[id];
@@ -629,16 +666,18 @@ function selectAllVisible(select) {
     return;
   }
   let skipped = 0;
-  filteredMembers().forEach(function (m) {
-    const locked = m['사번'] && lockedEmpids[m['사번']];
+  const list = filteredMembers();
+  for (let i = 0; i < list.length; i++) {
+    const m = list[i];
     if (select) {
-      if (locked) { skipped++; return; } // 이미 뽑힌 사람은 전체선택에서 제외
+      if (m['사번'] && lockedEmpids[m['사번']]) { skipped++; continue; } // 이미 뽑힌 사람은 전체선택에서 제외
       selectedIds[m.id] = true;
     } else {
       delete selectedIds[m.id];
     }
-  });
-  renderMembers();
+  }
+  syncCheckboxes();
+  updateSelCount();
   if (select && skipped > 0) {
     showGlobalOk('이미 연명부로 뽑힌 ' + skipped + '명은 자동으로 제외하고 선택했습니다.');
   }
