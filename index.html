@@ -104,7 +104,7 @@
   }
 
   /* ===== 자동 진단 대시보드 ===== */
-  #autoDiagnosisPanel { border:1px solid #dbe2ef; background:linear-gradient(180deg,#fff,#f8faff); }
+  #autoDiagnosisPanel { border:1px solid #dbe2ef; background:linear-gradient(180deg,#fff,#f8faff) !important; }
   .diag-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
   .diag-title { font-size:17px; font-weight:800; color:#243b6b; }
   .diag-sub { font-size:12px; color:#777; margin-top:3px; }
@@ -193,7 +193,9 @@
   <div id="globalOk"></div>
 
   <!-- 자동 진단 대시보드 -->
-  <div class="panel no-print" id="autoDiagnosisPanel">
+  <div id="diagModalBackdrop" class="no-print" onclick="if (event.target === this) closeDiagModal();"
+       style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1000; align-items:center; justify-content:center; padding:20px;">
+   <div id="autoDiagnosisPanel" style="background:#fff; border-radius:12px; padding:20px; width:1000px; max-width:95vw; max-height:90vh; overflow:auto;">
     <div class="diag-head">
       <div>
         <div class="diag-title">🩺 투표관리 자동 진단</div>
@@ -225,7 +227,9 @@
     <div class="diag-actions">
       <button class="secondary" onclick="downloadDiagnosisExcel()">📥 진단결과 엑셀</button>
       <button class="secondary" onclick="focusDiagnosisProblems()">🔎 오류 대상만 보기</button>
+      <button class="secondary" onclick="closeDiagModal()" style="margin-left:auto;">닫기 ✕</button>
     </div>
+   </div>
   </div>
 
   <!-- 관리자 메뉴: 엑셀 업로드/다운로드 -->
@@ -295,6 +299,8 @@
     <div class="controls">
       <button onclick="buildRoster()">연명부 생성</button>
       <button class="secondary" id="bulkExcelBtn" onclick="bulkGenerateByGroup()">일괄 엑셀 (폴더별)</button>
+      <button class="ghost" onclick="autoGenerateRosters()" title="투표구별로 연명부를 한 번에 전부 만듭니다">⚡ 전체 연명부 자동 생성</button>
+      <button class="secondary" id="diagOpenBtn" onclick="openDiagModal()" style="margin-left:auto;">🩺 자동 진단 <b id="diagBadge" style="margin-left:4px;"></b></button>
     </div>
     <div class="sub" style="margin-bottom:0;" id="bulkExcelHint">
       "일괄 엑셀"은 선택된 인원(또는 지금 검색·필터된 인원)을 투표구 번호별로 나눠서, 각각 "투표구_번호" 폴더 안에 엑셀로 한 번에 저장합니다.
@@ -1517,6 +1523,17 @@ function downloadFilteredExcel() {
 
 /* ===================== 자동 진단 / 자동 연명부 ===================== */
 
+function openDiagModal() {
+  runAutoDiagnosis(); // 열 때마다 최신 상태로 다시 진단
+  document.getElementById('diagModalBackdrop').style.display = 'flex';
+}
+function closeDiagModal() {
+  document.getElementById('diagModalBackdrop').style.display = 'none';
+}
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') closeDiagModal();
+});
+
 function diagText(v) {
   return String(v == null ? '' : v).trim();
 }
@@ -1749,6 +1766,14 @@ function runAutoDiagnosis() {
     '마지막 진단: ' + new Date().toLocaleString('ko-KR') +
     ' · 잠금 ' + a.lockedCount + '명 · 생성된 연명부 ' + rosterBatches.length + '묶음';
 
+  const badge = document.getElementById('diagBadge');
+  if (badge) {
+    const needCheck = recCount || (rosterBatches.length && (rosterMissing || a.rosterDuplicateKeys.length));
+    if (totalErrors) { badge.textContent = '● 오류 ' + totalErrors + '건'; badge.style.color = '#c92a2a'; }
+    else if (needCheck) { badge.textContent = '● 확인 권장'; badge.style.color = '#b7791f'; }
+    else { badge.textContent = '● 정상'; badge.style.color = '#2b8a3e'; }
+  }
+
   window.lastDiagnosis = a;
 }
 
@@ -1787,11 +1812,13 @@ function autoGenerateRosters() {
   candidates.forEach(function(m) { if (m.id != null) selectedIds[m.id] = true; });
 
   // 기존 수동 생성 함수를 그대로 사용하여 폴더/잠금/정렬/인쇄 기능을 동일하게 유지
+  closeDiagModal();
   buildRoster();
   showGlobalOk('투표구별 자동 연명부 생성이 완료되었습니다. 총 ' + candidates.length + '명입니다.');
 }
 
 function focusDiagnosisProblems() {
+  closeDiagModal();
   const a = analyzeVoteData();
   const badKeys = {};
   a.duplicateEmpids.forEach(function(k){ badKeys[k] = true; });
