@@ -61,7 +61,7 @@
   /* ===== 연명부 표: 예시.xlsx 서식 (제목 HY견고딕 18, 머리글 돋움 10·연회색, 본문 돋움 11, 바깥 굵은 테두리·안쪽 얇은 테두리) ===== */
   .roster-sheet { margin: 0 auto; }
   .roster-table { table-layout: fixed; border-collapse: collapse; width: 100%; background: #fff;
-    font-family: '돋움','Dotum','맑은 고딕','Malgun Gothic',sans-serif; font-size: 11pt; color: #000; white-space: nowrap; }
+    font-family: '돋움','Dotum','맑은 고딕','Malgun Gothic',sans-serif; font-size: var(--rt-font, 11pt); color: #000; white-space: nowrap; }
   .roster-table th, .roster-table td { border: 1px solid #000 !important; text-align: center; vertical-align: middle;
     padding: 0 3px; word-break: keep-all; overflow: hidden; background: #fff !important; color: #000 !important; position: static; font-weight: 400; }
   .roster-table tbody tr:hover td { background: #fff !important; }
@@ -71,9 +71,9 @@
   .roster-table tr > :first-child { border-left: 2px solid #000 !important; }
   .roster-table tr > :last-child { border-right: 2px solid #000 !important; }
   .roster-table tbody tr:last-child td { border-bottom: 2px solid #000 !important; }
-  .roster-table thead tr.rt-head th { font-size: 10pt; height: 16.5pt; background: #f2f2f2 !important; border-top: 2px solid #000 !important; }
+  .roster-table thead tr.rt-head th { font-size: var(--rt-head, 10pt); height: var(--rt-headrow, 16.5pt); background: #f2f2f2 !important; border-top: 2px solid #000 !important; }
   .roster-table thead tr.rt-title th { border: none !important; font-family: 'HY견고딕','HYGothic-Extra','HY그래픽','맑은 고딕','Malgun Gothic',sans-serif;
-    font-size: 18pt; height: 33.75pt; padding: 0; }
+    font-size: var(--rt-title, 18pt); height: var(--rt-titlerow, 33.75pt); padding: 0; }
 
   .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
   .loading { font-size: 13px; color: #999; }
@@ -1254,13 +1254,11 @@ function printRoster() { window.print(); }
 /* ===================== 연명부 표/엑셀 서식 (진짜_최종.xlsx 기준) ===================== */
 const DEFAULT_PRINT_TITLE = '2026년 통합 단체교섭 의견일치안 조합원 찬반투표';
 // ===== 예시.xlsx 서식 =====
-const ROSTER_FONT_PT = 11;    // 표 안 글씨: 돋움 11pt
-const ROSTER_HEAD_PT = 10;    // 머리글: 돋움 10pt
-const ROSTER_TITLE_PT = 18;   // 제목: HY견고딕 18pt
+const SIZE_PTS = [11, 13, 15, 17, 19];   // 글씨 크기 선택지: 11pt = 예시 그대로, 19pt = A3를 거의 꽉 채움
+// 아래 값들은 선택한 글씨 크기에 맞춰 applyRosterColumns()가 계산 (예시 11pt 기준 비율 유지)
+let ROSTER_FONT_PT = 15, ROSTER_HEAD_PT = 14, ROSTER_TITLE_PT = 24;
 const ROSTER_FONT_STACK = "'돋움','Dotum','맑은 고딕','Malgun Gothic',sans-serif";
-const TITLE_ROW_PT = 33.75;   // 제목 두 줄 높이 (16.5 + 17.25)
-const HEAD_ROW_PT = 16.5;
-const ROW_PTS = { normal: 20, stamp: 30 };   // 보통 20pt / 도장(인주) 찍기 좋게 넓게 30pt
+let TITLE_ROW_PT = 33.75, HEAD_ROW_PT = 16.5;   // 제목 두 줄 / 머리글 높이 (예시 11pt 기준)
 const PAPERS = { A3: { w: 420, h: 297, excel: 8 }, A4: { w: 297, h: 210, excel: 9 } };
 // 열 구성 (예시 순서) — 서명칸은 도장 자리라 너비 고정, 나머지는 내용에 딱 맞춰 계산 (computeRosterWidths)
 const ROSTER_ALL_COLS = [
@@ -1275,12 +1273,12 @@ const ROSTER_FIELD = {
   '사번': function (m) { return m['사번'] || ''; }, '성명': function (m) { return m['성명'] || ''; },
   '투표장소': function (m) { return m['투표장소'] || ''; }, '서명': function () { return ''; }
 };
-let ROSTER_OPTS = { paper: 'A3', bonbu: true, rowh: 'normal' };
+let ROSTER_OPTS = { paper: 'A3', bonbu: true, rowh: 'normal', size: 15 };
 try {
   const saved = JSON.parse(localStorage.getItem('vote_roster_print_opts_v2') || 'null');
-  if (saved && PAPERS[saved.paper]) ROSTER_OPTS = { paper: saved.paper, bonbu: saved.bonbu !== false, rowh: ROW_PTS[saved.rowh] ? saved.rowh : 'normal' };
+  if (saved && PAPERS[saved.paper]) ROSTER_OPTS = { paper: saved.paper, bonbu: saved.bonbu !== false, rowh: saved.rowh === 'stamp' ? 'stamp' : 'normal', size: SIZE_PTS.indexOf(saved.size) >= 0 ? saved.size : 15 };
 } catch (e) { /* 저장된 설정을 못 읽으면 기본값 */ }
-let ROWS_PER_PAGE = 36, ROW_PT = 20, ROSTER_HEADERS = [], ROSTER_COL_WIDTHS = [], ROSTER_LAST_COL = 'J';
+let ROWS_PER_PAGE = 30, ROW_PT = 22, ROSTER_HEADERS = [], ROSTER_COL_WIDTHS = [], ROSTER_LAST_COL = 'J';
 
 // 선택한 용지·열·행 높이를 모든 곳(화면 표, 인쇄, 엑셀)에 반영
 function applyRosterColumns() {
@@ -1288,7 +1286,14 @@ function applyRosterColumns() {
   ROSTER_HEADERS = cols.map(function (c) { return c.h; });
   ROSTER_COL_WIDTHS = cols.map(function (c) { return c.w; });
   ROSTER_LAST_COL = String.fromCharCode(64 + ROSTER_HEADERS.length);
-  ROW_PT = ROW_PTS[ROSTER_OPTS.rowh] || ROW_PTS.normal;
+  // 글씨 크기에 맞춰 표 전체(제목·머리글·행 높이)를 같은 비율로 키움. 칸 너비는 글씨 길이에 딱 맞게 따라서 커짐
+  const size = SIZE_PTS.indexOf(ROSTER_OPTS.size) >= 0 ? ROSTER_OPTS.size : 15;   // 설정값이 비어 있어도 기본(15pt)으로
+  ROSTER_FONT_PT = size;
+  ROSTER_HEAD_PT = size - 1;
+  ROSTER_TITLE_PT = Math.round(18 * size / 11);
+  TITLE_ROW_PT = Math.round(33.75 * size / 11 * 4) / 4;
+  HEAD_ROW_PT = Math.max(16.5, Math.round(16.5 * size / 11 * 2) / 2);
+  ROW_PT = ROSTER_OPTS.rowh === 'stamp' ? Math.max(30, Math.round(size * 2)) : Math.max(20, Math.round(size * 1.45));   // 보통: 11pt=20, 15pt=22 / 도장용: 30pt 이상
   const paper = PAPERS[ROSTER_OPTS.paper];
   const usablePt = (paper.h - 16) * 72 / 25.4;   // 위아래 여백 8mm씩 뺀 높이
   ROWS_PER_PAGE = Math.max(5, Math.floor((usablePt - TITLE_ROW_PT - HEAD_ROW_PT) / ROW_PT) - 1);
@@ -1323,7 +1328,7 @@ function measurePx(text, pt, bold) {
 function computeRosterWidths(members) {
   const cols = ROSTER_ALL_COLS.filter(function (c) { return !c.opt || ROSTER_OPTS[c.opt]; });
   return cols.map(function (c) {
-    if (c.fixed) return c.w;
+    if (c.fixed) return Math.round(c.w * ROSTER_FONT_PT / 11 * 8) / 8;   // 서명칸(도장 자리)은 내용이 없으니 글씨 크기에 비례해서 같이 넓어짐
     const f = ROSTER_FIELD[c.h];
     const px = members.map(function (m, i) { return measurePx(f(m, i), ROSTER_FONT_PT); }).sort(function (a, b) { return a - b; });
     const p97 = px.length ? px[Math.max(0, Math.ceil(px.length * 0.97) - 1)] : 0;
@@ -1342,8 +1347,10 @@ function renderPrintOptions() {
     el.innerHTML = '<label style="font-size:13px;">용지 <select class="po-paper" onchange="onPrintOptionChange(this)">' +
       '<option value="A3">A3 가로</option><option value="A4">A4 가로</option></select></label>' +
       '<label style="font-size:13px; margin-left:12px;"><input type="checkbox" class="po-bonbu" onchange="onPrintOptionChange(this)"> 사업본부 칸 포함</label>' +
+      '<label style="font-size:13px; margin-left:12px;">글씨 크기 <select class="po-size" onchange="onPrintOptionChange(this)">' +
+      SIZE_PTS.map(function (n) { return '<option value="' + n + '">' + n + 'pt' + (n === 11 ? ' (작게·예시 그대로)' : n === 15 ? ' (보통)' : n === 19 ? ' (크게)' : '') + '</option>'; }).join('') + '</select></label>' +
       '<label style="font-size:13px; margin-left:12px;">행 높이 <select class="po-rowh" onchange="onPrintOptionChange(this)">' +
-      '<option value="normal">보통 (20pt)</option><option value="stamp">넓게 (도장 찍기용 30pt)</option></select></label>';
+      '<option value="normal">보통</option><option value="stamp">넓게 (도장 찍기용 30pt~)</option></select></label>';
   });
   syncPrintOptionControls();
 }
@@ -1351,11 +1358,13 @@ function syncPrintOptionControls() {
   document.querySelectorAll('.po-paper').forEach(function (e) { e.value = ROSTER_OPTS.paper; });
   document.querySelectorAll('.po-bonbu').forEach(function (e) { e.checked = ROSTER_OPTS.bonbu; });
   document.querySelectorAll('.po-rowh').forEach(function (e) { e.value = ROSTER_OPTS.rowh; });
+  document.querySelectorAll('.po-size').forEach(function (e) { e.value = String(ROSTER_OPTS.size); });
 }
 let lastPrintAllBatchId = undefined;
 function onPrintOptionChange(el) {
   if (el.classList.contains('po-paper')) ROSTER_OPTS.paper = el.value;
   else if (el.classList.contains('po-rowh')) ROSTER_OPTS.rowh = el.value;
+  else if (el.classList.contains('po-size')) ROSTER_OPTS.size = Number(el.value);
   else ROSTER_OPTS.bonbu = el.checked;
   saveRosterOpts();
   applyRosterColumns();
@@ -1378,14 +1387,14 @@ function buildRosterTableHtml(title, members) {
   const widths = computeRosterWidths(members);
   const total = widths.reduce(function (a, b) { return a + b; }, 0);
   const paper = PAPERS[ROSTER_OPTS.paper];
-  const sheetMm = paper.w - 16;   // 용지 폭에서 좌우 8mm씩만 남기고 꽉 채움 (열 비율은 글씨 길이 그대로)
+  const sheetMm = Math.round(Math.min(total * 7 * 25.4 / 96, paper.w - 16) * 10) / 10;   // 글씨에 딱 맞는 폭. 용지보다 넓을 때만 용지 폭에 맞춰 줄임
   const cols = widths.map(function (w) { return '<col style="width:' + (w / total * 100).toFixed(3) + '%">'; }).join('');
   const head = ROSTER_HEADERS.map(function (h) { return '<th>' + h + '</th>'; }).join('');
   const rows = members.map(function (m, i) {
     return '<tr>' + rosterCells(m, i).map(function (v) { return '<td>' + escapeHtml(v) + '</td>'; }).join('') + '</tr>';
   }).join('');
   const n = ROSTER_HEADERS.length;
-  return '<div class="roster-sheet" style="width:' + sheetMm + 'mm; --rt-row:' + ROW_PT + 'pt;"><table class="roster-table"><colgroup>' + cols + '</colgroup><thead>' +
+  return '<div class="roster-sheet" style="width:' + sheetMm + 'mm; --rt-row:' + ROW_PT + 'pt; --rt-font:' + ROSTER_FONT_PT + 'pt; --rt-head:' + ROSTER_HEAD_PT + 'pt; --rt-title:' + ROSTER_TITLE_PT + 'pt; --rt-headrow:' + HEAD_ROW_PT + 'pt; --rt-titlerow:' + TITLE_ROW_PT + 'pt;"><table class="roster-table"><colgroup>' + cols + '</colgroup><thead>' +
     '<tr class="rt-title"><th colspan="' + n + '">' + escapeHtml(title) + '</th></tr>' +
     '<tr class="rt-head">' + head + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
@@ -1398,7 +1407,7 @@ function fitRosterTables(root) {
     if (!body) return;
     const rows = body.rows;
     const ncol = ROSTER_HEADERS.length;
-    const MIN_PT = 7.5;
+    const MIN_PT = Math.round(ROSTER_FONT_PT * 0.68 * 10) / 10;
     const maxRatio = new Array(ncol).fill(1);
     const ratios = [];
     for (let r = 0; r < rows.length; r++) {            // 1) 측정만 (한 번에)
@@ -1434,7 +1443,7 @@ function fitRosterTables(root) {
             td.style.whiteSpace = 'normal';
             td.style.wordBreak = 'break-all';
             td.style.lineHeight = '1.05';
-            td.style.fontSize = Math.min(8.5, Math.floor((ROSTER_FONT_PT / (ratio / 2)) * 0.93 * 10) / 10) + 'pt';
+            td.style.fontSize = Math.min(Math.round(ROSTER_FONT_PT * 0.78 * 10) / 10, Math.floor((ROSTER_FONT_PT / (ratio / 2)) * 0.93 * 10) / 10) + 'pt';
           }
         }
       }
@@ -1457,18 +1466,14 @@ function triggerDownload(blob, filename) {
 // 못 불러왔으면 서식 없는 기본 엑셀로 저장
 // 한 장(시트)을 "진짜_최종.xlsx" 서식으로 채움
 function addRosterSheet(wb, sheetName, title, members) {
-  const base = computeRosterWidths(members);
-  const naturalMm = base.reduce(function (a, b) { return a + b; }, 0) * 7 * 25.4 / 96;
+  const widths = computeRosterWidths(members);   // 글씨 크기에 맞춰 딱 맞는 열 너비
   const paper = PAPERS[ROSTER_OPTS.paper];
-  const availMm = (paper.w - 2 * 5.08) * 0.97;   // 좌우 여백 0.2인치씩 뺀 폭의 97% (프린터·글꼴 차이로 잘리지 않게 약간 여유)
-  const factor = naturalMm < availMm ? availMm / naturalMm : 1;   // 내용 길이 비율 그대로 용지 폭에 꽉 차게 넓힘
-  const widths = base.map(function (w) { return Math.round(w * factor * 1000) / 1000; });
   const ws = wb.addWorksheet(sheetName, {
     pageSetup: {
       paperSize: paper.excel, orientation: 'landscape', horizontalCentered: true,
       margins: { left: 0.2, right: 0.2, top: 0.3, bottom: 0.3, header: 0, footer: 0 },
       printTitlesRow: '1:3',
-      fitToPage: true, fitToWidth: 1, fitToHeight: 0   // 가로는 항상 한 장 폭에 맞춤 (세로는 필요한 만큼 장 수가 늘어남)
+      fitToPage: true, fitToWidth: 1, fitToHeight: 0   // 가로는 항상 한 장 폭 안에 (용지보다 넓을 때만 줄어듦), 세로는 필요한 만큼 장 수가 늘어남
     },
     views: [{ state: 'frozen', ySplit: 3 }]
   });
@@ -1487,8 +1492,8 @@ function addRosterSheet(wb, sheetName, title, members) {
   t.value = title;
   t.font = { name: 'HY견고딕', size: ROSTER_TITLE_PT };
   t.alignment = { horizontal: 'center', vertical: 'middle' };
-  ws.getRow(1).height = 16.5;
-  ws.getRow(2).height = 17.25;
+  ws.getRow(1).height = TITLE_ROW_PT / 2 - 0.375;
+  ws.getRow(2).height = TITLE_ROW_PT / 2 + 0.375;
 
   // 머리글: 돋움 10pt, 연회색 배경
   const hr = ws.getRow(3);
