@@ -275,9 +275,12 @@
     <div style="background:#fff; border-radius:12px; padding:20px; width:900px; max-width:95vw; max-height:90vh; overflow:auto;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <div style="font-size:18px; font-weight:700; color:#1f3a73;">🧾 작업 이력 (누가 · 언제 · 무엇을)</div>
-        <button class="secondary" onclick="closeHistoryModal()">닫기 ✕</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="secondary write-only" id="historyPurgeBtn" style="display:none;" onclick="purgeMyDeletedHistory()">🧹 내가 삭제한 묶음의 이력 정리</button>
+          <button class="secondary" onclick="closeHistoryModal()">닫기 ✕</button>
+        </div>
       </div>
-      <div class="sub">연명부 생성·출력 완료·잠금 해제·보관·되살리기 기록입니다. 모든 저장은 GitHub 저장 기록(커밋)에도 작업자 이름과 함께 남습니다.</div>
+      <div class="sub">연명부 생성·출력 완료·잠금 해제·보관·되살리기·삭제 기록입니다. 모든 저장은 GitHub 저장 기록(커밋)에도 작업자 이름과 함께 남습니다. 삭제한 묶음의 이력은 그 묶음을 만든 사람만 "이력 정리"로 지울 수 있습니다.</div>
       <div id="historyBody"></div>
     </div>
   </div>
@@ -827,6 +830,38 @@ function showBusyToast(msg) {
   el.textContent = msg; el.style.display = '';
 }
 function hideBusyToast() { const el = document.getElementById('busyToast'); if (el) el.style.display = 'none'; }
+function myDeletedChunkIds(data) {
+  return Object.keys(data.chunks).filter(function (id) { const c = data.chunks[id]; return c.status === 'deleted' && !!WORKER && (c.createdBy || '') === WORKER; });
+}
+// ----- 작업 이력 정리: 내가 만들어 이미 삭제한 묶음의 기록만 원장에서 완전히 제거 (활성·보관·남이 만든 기록은 건드리지 않음) -----
+async function purgeMyDeletedHistory() {
+  if (!requireRosterWrite()) return;
+  if (deleteBusy) { alert('삭제·정리가 진행 중입니다. 끝난 뒤에 다시 눌러 주세요.'); return; }
+  if (!WORKER) { alert('작업자 이름이 없어 정리할 수 없습니다. 로그아웃 후 작업자 이름을 입력해 다시 접속해 주세요.'); return; }
+  const ids0 = myDeletedChunkIds(ledger.data);
+  if (!ids0.length) { alert('정리할 이력이 없습니다. (내가 만들어 삭제한 묶음이 없습니다)'); return; }
+  const names = [], lines = ids0.reduce(function (a, id) { const c = ledger.data.chunks[id]; if (names.indexOf(c.voteName) < 0) names.push(c.voteName); return a + (c.history || []).length; }, 0);
+  const typed = prompt('내가 만들어 삭제한 묶음 ' + ids0.length + '개(' + names.join(', ') + ')의 작업 이력 ' + lines + '줄을 완전히 지웁니다.\n\n· 이 사이트의 "작업 이력"과 원장 파일에서 사라지고 복구할 수 없습니다.\n· GitHub 저장소의 변경 이력(커밋)에는 작업자 이름과 함께 그대로 남습니다.\n· 삭제하지 않은 묶음, 보관된 묶음, 다른 관리자가 만든 이력은 그대로입니다.\n· 확인 기록이 줄어든다는 점을 감안해 주세요.\n\n계속하려면 아래 칸에 초기화 라고 입력하세요.');
+  if (typed === null) return;
+  if (String(typed).trim() !== '초기화') { alert('"초기화"를 정확히 입력하지 않아 취소했습니다. 아무것도 지우지 않았습니다.'); return; }
+  deleteBusy = true; const t0 = Date.now(); const label = '⏳ 작업 이력 정리 중… ';
+  showBusyToast(label + '0초 (저장소에 기록하는 중입니다)');
+  busyTimer = setInterval(function () { showBusyToast(label + Math.floor((Date.now() - t0) / 1000) + '초 (저장소에 기록하는 중입니다)'); }, 500);
+  let done = false, purged = [];
+  try {
+    done = await ledgerAction('작업 이력 정리 (내가 삭제한 묶음)', function (w) {
+      const ids = myDeletedChunkIds(w);                       // 저장 직전의 최신 원장 기준으로 다시 계산 (남의 것·삭제 안 된 것은 절대 포함되지 않음)
+      if (!ids.length) throw new Error('정리할 이력이 없습니다. (이미 정리되었거나 다른 PC에서 처리했습니다)');
+      ids.forEach(function (id) { delete w.chunks[id]; });
+      purged = ids; return { purged: ids };
+    }, null);
+  } finally { clearInterval(busyTimer); hideBusyToast(); deleteBusy = false; }
+  if (done) {
+    pendingChunks = pendingChunks.filter(function (c) { return purged.indexOf(c.id) < 0; });   // 응답 유실로 아직 임시 목록에 남은 같은 기록이 다시 저장되어 되살아나는 일을 막음
+    showGlobalOk('삭제한 묶음 ' + purged.length + '개의 작업 이력을 정리했습니다. (' + ((Date.now() - t0) / 1000).toFixed(1) + '초)');
+    openHistoryModal();
+  }
+}
 function canDeleteCreators(list) { return !!WORKER && list.length > 0 && list.every(function (n) { return n === WORKER; }); }
 function deleteButtonHtml(creators, unsaved, name, which) {
   const can = !unsaved && canDeleteCreators(creators);
@@ -1593,11 +1628,11 @@ function duplicateError(details, what) {
   e.isDuplicate = true; e.details = details; return e;
 }
 // 저장 직전 안전 검사: 기존 연명부 기록·사번이 하나라도 줄어들면 저장하지 않음
-function assertNoLoss(prev, next) {
+function assertNoLoss(prev, next, purged) {
   Object.keys(prev.chunks).forEach(function (id) {
     const a = prev.chunks[id], b = next.chunks[id];
     const bad = function (why) { throw new Error('내부 안전 검사 실패(' + why + '): 기존 연명부 기록이 사라질 수 있어 저장을 중단했습니다.'); };
-    if (!b) bad('묶음 누락');
+    if (!b) { if (purged && purged.indexOf(id) >= 0 && a.status === 'deleted') return; bad('묶음 누락'); }   // 예외는 "이미 삭제 상태이고 정리 목록에 명시된" 묶음뿐 (활성·보관 묶음은 목록에 넣어도 막힘)
     Object.keys(a.groups).forEach(function (k) {
       const bg = b.groups[k]; if (!bg) bad('폴더 누락');
       const set = {}; bg.empids.forEach(function (e) { set[e] = 1; });
@@ -1614,7 +1649,7 @@ async function ledgerMutate(message, mutator) {
     const out = mutator(work) || {};                                    // ② 최신본으로 검사 (중복이면 예외 → 저장하지 않음)
     if (out.noop) { ledger = { data: cur.data, sha: cur.sha }; return out; }
     work.schema = 2; work.rev = (cur.data.rev || 0) + 1; work.updatedAt = nowIso(); work.updatedBy = WORKER;
-    assertNoLoss(cur.data, work);
+    assertNoLoss(cur.data, work, out.purged);
     try {
       const res = await ghPutJson(LEDGER_PATH, work, message + ' — 작업자: ' + WORKER, cur.sha);   // ③ 읽은 그 버전일 때만 저장 (sha 비교)
       ledger = { data: work, sha: res && res.content && res.content.sha || null }; ledgerEpoch++;   // 확정된 것만 화면 기준으로 삼음
@@ -1996,6 +2031,8 @@ function openHistoryModal() {
     rows.slice(0, 300).map(function (r) { return '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px 5px; white-space:nowrap;">' + escapeHtml(new Date(r.at).toLocaleString('ko-KR')) + '</td><td style="padding:4px 5px;">' + escapeHtml(r.by) + '</td><td style="padding:4px 5px;">' + escapeHtml(r.action) + '</td><td style="padding:4px 5px;">' + escapeHtml(r.voteName) + '</td><td style="padding:4px 5px;">' + escapeHtml(r.note || '') + '</td></tr>'; }).join('') + '</table>' +
     (rows.length > 300 ? '<div class="sub">최근 300건만 표시합니다.</div>' : '')
     : '<div class="diag-details">아직 기록이 없습니다.</div>';
+  const pb = document.getElementById('historyPurgeBtn');
+  if (pb) { const n = myDeletedChunkIds(ledger.data).length; pb.style.display = CAN_WRITE ? '' : 'none'; pb.disabled = n === 0; pb.textContent = '🧹 내가 삭제한 묶음의 이력 정리 (' + n + '개)'; pb.title = n ? '내가 만들어 삭제한 묶음의 작업 이력을 완전히 지웁니다' : '정리할 이력이 없습니다 (내가 만들어 삭제한 묶음이 없습니다)'; }
   document.getElementById('historyModalBackdrop').style.display = 'flex';
 }
 function closeHistoryModal() { document.getElementById('historyModalBackdrop').style.display = 'none'; }
