@@ -4,9 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>조합원 투표 연명부</title>
+<script>try { if (sessionStorage.getItem('vote_roster_gh_config') || localStorage.getItem('vote_roster_gh_config')) document.documentElement.className += ' has-cfg'; } catch (e) { /* 읽지 못하면 로그인 화면 */ }</script>
 <script defer src="vendor/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw"></script>
 <script defer src="vendor/exceljs.min.js" integrity="sha384-Pqp51FUN2/qzfxZxBCtF0stpc9ONI6MYZpVqmo8m20SoaQCzf+arZvACkLkirlPz"></script>
 <style>
+  html.has-cfg #loginScreen { display: none; }   /* 저장된 로그인 정보가 있으면 토큰 입력 화면을 처음부터 숨김 (깜빡임 방지) */
+  html.has-cfg:not(.booted) body::before { content: '⏳ 불러오는 중…'; display: block; text-align: center; padding: 70px 20px; color: #5b6b85; font-size: 15px; }
   @page { size: A3 landscape; margin: 8mm 0; }
   * { box-sizing: border-box; }
   body {
@@ -958,13 +961,16 @@ const FILTER_SELECT_IDS = {
   '투표장소':'locationFilter','투표구':'districtFilter','부서':'deptFilter'
 };
 
-window.onload = function () {
+function bootApp() {   // 스크립트가 준비되는 즉시 실행 (이미지·엑셀 라이브러리를 다 받을 때까지 기다리지 않음)
   CFG = loadConfig();
+  document.documentElement.classList.add('booted');
   if (CFG) {
     document.getElementById('loginScreen').style.display = 'none';
     startApp();
+  } else {
+    document.documentElement.classList.remove('has-cfg');   // 저장된 정보가 없거나 손상됨 → 로그인 화면 표시
   }
-};
+}
 
 async function startApp() {
   CAN_WRITE = false; PERM = 'checking';   // 권한 확인이 성공하기 전에는 저장 기능을 열지 않음
@@ -3366,6 +3372,8 @@ function escapeHtml(str) {
   return String(str == null ? '' : str)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+bootApp();   // 모든 함수·상수가 정의된 뒤 마지막에 시작
 </script>
 </body>
 </html>
