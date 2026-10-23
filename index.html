@@ -836,6 +836,22 @@ function showBusyToast(msg) {
   el.textContent = msg; el.style.display = '';
 }
 function hideBusyToast() { const el = document.getElementById('busyToast'); if (el) el.style.display = 'none'; }
+// 저장·보관·되살리기 등 저장소에 기록하는 동작의 진행 표시: 0.7초 넘게 걸릴 때만 "처리 중… N초"를 보여 줌 (눌렀는데 반응이 없어 멈춘 것처럼 보이는 것을 막음)
+var opBusy = 0, opTimer = null, opShowTimer = null, opStart = 0, opLabel = '';
+function opBusyStart(label) {
+  if (deleteBusy) return false;                       // 삭제·이력 정리는 자기 표시를 따로 가짐
+  opBusy++; if (opBusy > 1) return true;
+  opLabel = label; opStart = Date.now();
+  const render = function () { showBusyToast('⏳ ' + opLabel + '… ' + Math.floor((Date.now() - opStart) / 1000) + '초 (저장소에 기록하는 중입니다)'); };
+  opShowTimer = setTimeout(function () { render(); opTimer = setInterval(render, 500); }, 700);
+  return true;
+}
+function opBusyStop(started) {
+  if (!started || opBusy === 0) return;
+  opBusy--; if (opBusy > 0) return;
+  clearTimeout(opShowTimer); clearInterval(opTimer); opShowTimer = opTimer = null;
+  if (!deleteBusy) hideBusyToast();
+}
 function myDeletedChunkIds(data) {
   return Object.keys(data.chunks).filter(function (id) { const c = data.chunks[id]; return c.status === 'deleted' && !!WORKER && (c.createdBy || '') === WORKER; });
 }
@@ -1876,6 +1892,7 @@ async function savePendingChunks(manual) {
   if (!pendingChunks.some(function (c) { return !c._local && !c._held; })) { updateRosterStatus(); return; }
   if (!ensureWorker()) { updateRosterStatus(); return; }
   rosterSaving = true; saveState = { state: 'saving', at: new Date(), text: '저장 중…' }; updateRosterStatus();
+  const bt = opBusyStart('연명부 저장하는 중');
   try {
     const before = pendingChunks.filter(function (c) { return !c._local; });
     try { await syncLedger({ force: true }); }                         // 동기화에 실패하면 저장하지 않음
@@ -1913,6 +1930,7 @@ async function savePendingChunks(manual) {
       }
     }
   } finally {
+    opBusyStop(bt);
     rosterSaving = false; saveDraft(); rosterRefreshAll();
     if (saveState.state !== 'fail' && pendingChunks.some(function (c) { return !c._local && !c._held; })) setTimeout(function () { savePendingChunks(); }, 0);   // 저장하는 동안 새로 만든 연명부가 있으면 이어서 저장
   }
@@ -1961,6 +1979,8 @@ function requireRosterWrite() {
   return ensureWorker();
 }
 async function ledgerAction(message, mutator, okMsg) {
+  const bt = opBusyStart(message + ' 처리 중');
+  try {
   try {
     await ledgerMutate(message, mutator);
     lastSave = { at: new Date(), ok: true, text: message };
@@ -1976,6 +1996,7 @@ async function ledgerAction(message, mutator, okMsg) {
     rosterRefreshAll();
     return false;
   }
+  } finally { opBusyStop(bt); }
 }
 function pushHistory(c, action, note) { c.history = (c.history || []).concat([{ at: nowIso(), by: WORKER, action: action, note: note || '' }]); }
 async function clearRosterFolders() {
