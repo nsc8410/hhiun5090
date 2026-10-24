@@ -65,6 +65,8 @@
   @media (max-width: 640px) { #logoMain, #logoLogin { max-width: 100%; width: auto; height: auto; max-height: 40px; object-fit: contain; } .wrap { padding-left: 10px; padding-right: 10px; } }
   .rt-pageno { text-align: center; font-size: 12px; color: #667; margin: 16px 0 6px; }
   /* 작은 부서를 한 장에 모아 인쇄할 때, 표와 표 사이의 점선(가운데 가위 표시) */
+  .roster-folder.printed { background: #eaf6ec; border-color: #43a047; }
+  .roster-folder .pmark { font-size: 11px; color: #2e7d32; font-weight: 700; }
   .cut-gap { height: 40px; }   /* 점선 없이 표 사이를 비워 두는 구분 (약 10mm: 가위·재단기로 자를 여유) */
   .folder-wrap { position: relative; display: inline-block; }
   .folder-wrap .folder-pick { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; z-index: 2; cursor: pointer; }
@@ -470,7 +472,9 @@
       <div id="batchPickBar" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 10px;">
           <button type="button" class="secondary" onclick="pickAllFolders(true)">전체 선택</button>
           <button type="button" class="secondary" onclick="pickAllFolders(false)">선택 해제</button>
+          <button type="button" class="secondary" onclick="pickUnprintedFolders()">인쇄 안 한 폴더만 선택</button>
           <button type="button" id="printPickedBtn" onclick="printSelectedFolders()" disabled>🖨 선택한 폴더 인쇄 (0개)</button>
+          <span id="printedInfo" style="font-size:12px; color:#2e7d32; font-weight:700;"></span>
           <span style="font-size:12px; color:#666;">부서 카드 오른쪽 위 칸에 체크한 폴더만 한 번에 인쇄합니다.</span>
         </div>
         <div id="batchModalBody" style="display:flex; flex-wrap:wrap; gap:10px;"></div>
@@ -509,6 +513,7 @@
       </div>
       <div class="actions no-print">
         <button onclick="window.print()">전체 인쇄하기</button>
+        <button class="ghost write-only" id="markShownPrintedBtn" style="display:none;" onclick="markShownFoldersPrinted()" title="이 화면에 있는 폴더를 인쇄한 것으로 기록합니다 (누가·언제)">✔ 이 화면의 폴더를 "인쇄함"으로 표시</button>
         <span class="print-options" style="display:inline-flex; align-items:center; margin-left:8px;"></span>
       </div>
       <div class="sub no-print">인쇄 방식: <b>폴더(부서 또는 투표구)마다 새 종이에서 시작</b>하고, 한 폴더 인원이 많으면 다음 장으로 이어지며 매 장 위에 제목·머리글이 반복됩니다. 위쪽의 <b>"작은 부서는 한 장에 모아 인쇄"</b>가 켜져 있으면(기본, 10명 이하) 인원이 적은 부서는 한 장에 위아래로 모아 <b>점선(✂) 또는 빈 간격</b>("구분"에서 선택)으로 구분해 인쇄하니, 인쇄 후 잘라서 쓰세요(꺼 두면 폴더끼리 한 장에 섞이지 않습니다). (한 장에 <b id="printAllCap"></b>명씩) 인쇄창에서 프린터 대신 "PDF로 저장"을 고르면 같은 모양의 PDF 한 파일로도 받을 수 있습니다.</div>
@@ -1590,6 +1595,20 @@ async function readLedgerRemote() {
   return { data: d, sha: r.sha };
 }
 
+// 폴더 안 사람 순서: 같은 과끼리 모으고, 과는 번호·이름 순(01조→02조…, 가나다) 또는 명단에 있는 순서, 과 안에서는 이름순. 과가 비면 맨 뒤
+function orderFolderMembers(list, rank) {
+  const mode = ROSTER_OPTS.sort;
+  return list.slice().sort(function (a, b) {
+    const ga = String(a['과'] || ''), gb = String(b['과'] || '');
+    if (ga !== gb) {
+      if (!ga) return 1; if (!gb) return -1;
+      if (mode === 'gwalist') { const ra = rank[(a['부서'] || '') + '\u0001' + ga], rb = rank[(b['부서'] || '') + '\u0001' + gb]; if (ra !== rb) return ra - rb; }
+      const c = ga.localeCompare(gb, 'ko', { numeric: true });   // 번호·이름 순 (01조 → 02조 … 10조)
+      return c !== 0 ? c : (ga < gb ? -1 : 1);                    // "01조"와 "1조"처럼 번호가 같으면 글자 순으로 정해, 서로 다른 과가 섞이지 않게 함
+    }
+    return String(a['성명'] || '').localeCompare(String(b['성명'] || ''), 'ko') || String(a['사번'] || '').localeCompare(String(b['사번'] || ''));
+  });
+}
 // ----- 기록을 합쳐서 화면용 묶음·잠금·출력 완료 계산 -----
 var rosterArchivedBy = {};
 function viewChunks() {
@@ -1607,7 +1626,7 @@ function recomputeRosterView() {
     const who = c.createdBy || '(알 수 없음)';
     if (c.status === 'archived') { archived[c.voteName] = (archived[c.voteName] || 0) + (c.count || 0); (archivedBy[c.voteName] = archivedBy[c.voteName] || []); if (archivedBy[c.voteName].indexOf(who) < 0) archivedBy[c.voteName].push(who); return; }
     let b = batches[c.voteName];
-    if (!b) { b = batches[c.voteName] = { id: batchIdFor(c.voteName), voteName: c.voteName, groupBy: c.groupBy, printTitle: c.printTitle, groups: {}, groupMeta: {}, printed: {}, chunkIds: [], creators: [], unsaved: false, _seen: {} }; order.push(b); }
+    if (!b) { b = batches[c.voteName] = { id: batchIdFor(c.voteName), voteName: c.voteName, groupBy: c.groupBy, printTitle: c.printTitle, groups: {}, groupMeta: {}, printed: {}, printedBy: {}, chunkIds: [], creators: [], unsaved: false, _seen: {} }; order.push(b); }
     b.groupBy = c.groupBy; b.printTitle = c.printTitle; b.chunkIds.push(c.id);
     if (b.creators.indexOf(who) < 0) b.creators.push(who);
     if (!c._saved) b.unsaved = true;
@@ -1622,10 +1641,14 @@ function recomputeRosterView() {
         if (!b._seen[sk]) { b._seen[sk] = 1; b.groups[key].push(m); }
         if (!c.released) locked[e] = true;
       });
-      if (g.printedAt && (!b.printed[key] || g.printedAt > b.printed[key])) b.printed[key] = g.printedAt;
+      if (g.printedAt && (!b.printed[key] || g.printedAt > b.printed[key])) { b.printed[key] = g.printedAt; b.printedBy[key] = g.printedBy || ''; }
     });
   });
-  order.forEach(function (b) { delete b._seen; Object.keys(b.printed).forEach(function (k) { if (!b.groups[k]) delete b.printed[k]; }); });
+  order.forEach(function (b) { delete b._seen; Object.keys(b.printed).forEach(function (k) { if (!b.groups[k]) { delete b.printed[k]; delete b.printedBy[k]; } }); });
+  if (ROSTER_OPTS.sort !== 'keep') {   // 부서별 폴더 안에서 같은 과끼리 모아서 보여 줌 (화면·인쇄·엑셀 모두 이 순서를 씀. 저장된 기록은 그대로)
+    const rank = {}; allMembers.forEach(function (m, i) { const kk = (m['부서'] || '') + '\u0001' + (m['과'] || ''); if (rank[kk] === undefined) rank[kk] = i; });
+    order.forEach(function (b) { if (b.groupBy === '부서') Object.keys(b.groups).forEach(function (k) { b.groups[k] = orderFolderMembers(b.groups[k], rank); }); });
+  }
   rosterBatches = order.filter(function (b) { return Object.keys(b.groups).length > 0; });
   lockedEmpids = locked; rosterArchived = archived; rosterArchivedBy = archivedBy; rosterChangedMembers = changed;
 }
@@ -2058,6 +2081,36 @@ async function togglePrinted() {
   });
   if (ok2) updatePrintedBtn();
 }
+// 여러 폴더를 한 번에 "인쇄함"으로 기록 (누가·언제는 원장과 작업 이력에 남음)
+async function markFoldersPrinted(items) {
+  if (!items.length || !requireRosterWrite()) return false;
+  let marked = 0;
+  const done = await ledgerAction('출력 완료: ' + items.length + '개 폴더', function (w) {
+    const seen = {};
+    items.forEach(function (it) {
+      Object.keys(w.chunks).forEach(function (id) {
+        const c = w.chunks[id];
+        if (c.status === 'active' && c.voteName === it.name && c.groups[it.key]) { c.groups[it.key].printedAt = nowIso(); c.groups[it.key].printedBy = WORKER; pushHistory(c, '출력 완료', (c.groups[it.key].label || it.key)); seen[it.name + '\u0001' + it.key] = true; }
+      });
+    });
+    marked = Object.keys(seen).length;
+    if (!marked) throw new Error('인쇄한 폴더가 이미 정리(보관)되었거나 없어져서 표시하지 못했습니다.');
+  }, null);
+  if (done) showGlobalOk(marked + '개 폴더를 "인쇄함"으로 표시했습니다.');
+  return done;
+}
+function isFolderPrinted(it) { const b = rosterBatches.find(function (x) { return x.voteName === it.name; }); return !!(b && b.printed[it.key]); }
+function markShownFoldersPrinted() { return markFoldersPrinted(lastPrintAllShown.slice()); }
+// 인쇄 창을 닫으면(인쇄했든 취소했든 이 신호가 옴) "인쇄하셨나요?" 하고 물어 인쇄한 폴더를 표시
+window.addEventListener('afterprint', function () {
+  if (!CAN_WRITE) return;
+  const pa = document.getElementById('printAllModalBackdrop'), ro = document.getElementById('rosterModalBackdrop');
+  let items = [];
+  if (pa && pa.style.display === 'flex') items = lastPrintAllShown.filter(function (it) { return !isFolderPrinted(it); });
+  else if (ro && ro.style.display === 'flex') { const b = getCurrentBatch(); if (b && currentRosterGroup) items = [{ name: b.voteName, key: currentRosterGroup }].filter(function (it) { return !isFolderPrinted(it); }); }
+  if (!items.length) return;   // 이미 모두 인쇄함으로 표시되어 있으면 묻지 않음
+  if (confirm('방금 인쇄하셨나요?\n아직 "인쇄함"으로 표시되지 않은 폴더 ' + items.length + '개를 "인쇄함"으로 표시할까요?\n(인쇄를 취소했다면 "취소"를 눌러 주세요)')) markFoldersPrinted(items);
+});
 function updatePrintedBtn() {
   const pb = document.getElementById('printedBtn'), batch = getCurrentBatch();
   if (pb && batch) pb.textContent = batch.printed[currentRosterGroup] ? '↩ 출력 완료 취소' : '✔ 출력 완료로 표시';
@@ -2219,11 +2272,20 @@ function buildRoster() {
 // ===== 묶음을 누르면 뜨는 폴더 목록 팝업 =====
 var folderPick = {};   // 묶음별로 체크한 폴더 { 묶음id: { 폴더키: true } } — 팝업을 다시 그려도 유지
 function pickedKeys(batch) { const p = folderPick[batch.id] || {}; return sortedGroupKeys(batch).filter(function (k) { return p[k]; }); }
+function fmtMDHM(iso) { const d = new Date(iso); if (isNaN(d.getTime())) return ''; const p2 = function (n) { return ('0' + n).slice(-2); }; return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()); }
+function pickUnprintedFolders() {
+  const batch = rosterBatches.find(function (b) { return b.id === currentBatchModalId; }); if (!batch) return;
+  folderPick[batch.id] = {}; sortedGroupKeys(batch).forEach(function (k) { if (!batch.printed[k]) folderPick[batch.id][k] = true; });
+  document.querySelectorAll('#batchModalBody .folder-pick').forEach(function (c) { c.checked = !!folderPick[batch.id][c.getAttribute('data-k')]; });
+  updatePickBar();
+}
 function updatePickBar() {
   const batch = rosterBatches.find(function (b) { return b.id === currentBatchModalId; }), btn = document.getElementById('printPickedBtn');
   if (!btn) return;
   const n = batch ? pickedKeys(batch).length : 0;
   btn.textContent = '🖨 선택한 폴더 인쇄 (' + n + '개)'; btn.disabled = n === 0;
+  const info = document.getElementById('printedInfo');
+  if (info) { const tot = batch ? Object.keys(batch.groups).length : 0, done = batch ? Object.keys(batch.printed).length : 0; info.textContent = tot ? '✔ 인쇄함 ' + done + '개 · 안 한 폴더 ' + (tot - done) + '개' : ''; }
 }
 function toggleFolderPick(el) {
   const b = el.getAttribute('data-b'), k = el.getAttribute('data-k'); folderPick[b] = folderPick[b] || {};
@@ -2253,10 +2315,11 @@ function openBatchModal(batchId) {
   document.getElementById('batchModalTitle').textContent = batch.voteName + ' — 폴더 ' + keys.length + '개 (총 ' + total + '명)';
   document.getElementById('batchModalBody').innerHTML = keys.map(function (k) {
     return '<div class="folder-wrap"><input type="checkbox" class="folder-pick" title="인쇄할 폴더로 선택" data-b="' + escapeHtml(batch.id).replace(/"/g, '&quot;') + '" data-k="' + escapeHtml(k).replace(/"/g, '&quot;') + '"' + (picks[k] ? ' checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleFolderPick(this)">' +
-      '<button type="button" class="roster-folder" onclick="openRosterModal(\'' + batch.id + '\',\'' + jsAttr(k) + '\')">' +
+      '<button type="button" class="roster-folder' + (batch.printed[k] ? ' printed' : '') + '" onclick="openRosterModal(\'' + batch.id + '\',\'' + jsAttr(k) + '\')">' +
       '<span class="icon">📁</span>' +
       '<span><span class="label">' + (batch.printed && batch.printed[k] ? '✔ ' : '') + escapeHtml(batch.groupMeta[k].label) + '</span><br>' +
-      '<span class="count">' + batch.groups[k].length + '명</span></span></button></div>';
+      '<span class="count">' + batch.groups[k].length + '명</span>' +
+      (batch.printed[k] ? '<br><span class="pmark">✔ 인쇄함 · ' + escapeHtml(fmtMDHM(batch.printed[k])) + (batch.printedBy[k] ? ' · ' + escapeHtml(batch.printedBy[k]) : '') + '</span>' : '') + '</span></button></div>';
   }).join('');
   document.getElementById('batchModalBackdrop').style.display = 'flex';
   updatePickBar();
@@ -2442,11 +2505,12 @@ function openPrintAllModal(batchId, onlyKeys) {   // onlyKeys: 골라서 인쇄�
   const allGroups = [];
   batches.forEach(function (batch) {
     sortedGroupKeys(batch).filter(function (k) { return !lastPrintAllKeys || lastPrintAllKeys.indexOf(k) >= 0; }).forEach(function (k) {
-      allGroups.push({ title: batch.printTitle || DEFAULT_PRINT_TITLE, members: batch.groups[k], label: batch.groupMeta[k].label, batchId: batch.id });
+      allGroups.push({ title: batch.printTitle || DEFAULT_PRINT_TITLE, members: batch.groups[k], label: batch.groupMeta[k].label, batchId: batch.id, name: batch.voteName, key: k });
     });
   });
   if (allGroups.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
 
+  lastPrintAllShown = allGroups.map(function (g) { return { name: g.name, key: g.key }; });
   const content = document.getElementById('printAllContent'); content.innerHTML = '';
   document.getElementById('printAllModalBackdrop').style.display = 'flex';   // 크기를 재야 해서 먼저 보이게 함
   document.getElementById('printAllCap').textContent = ROWS_PER_PAGE;
@@ -2491,10 +2555,10 @@ const ROSTER_FIELD = {
   '투표장소': function (m) { return m['투표장소'] || ''; }, '서명': function () { return ''; }
 };
 function clampPackMax(v) { v = parseInt(v, 10); return isFinite(v) ? Math.min(29, Math.max(1, v)) : 10; }
-let ROSTER_OPTS = { paper: 'A3', pack: true, packMax: 10, sep: 'line' };   // sep: 'line' 점선(✂) / 'gap' 간격만   // pack: 작은 부서를 한 장에 모아 인쇄(점선 구분) / packMax: 몇 명 이하를 작은 부서로 볼지
+let ROSTER_OPTS = { paper: 'A3', pack: true, packMax: 10, sep: 'line', sort: 'gwaname' };   // sort: 'gwaname' 과별(번호·이름순) / 'gwalist' 과별(명단 순서) / 'keep' 만든 순서(예전)   // sep: 'line' 점선(✂) / 'gap' 간격만   // pack: 작은 부서를 한 장에 모아 인쇄(점선 구분) / packMax: 몇 명 이하를 작은 부서로 볼지
 try {
   const saved = JSON.parse(localStorage.getItem('vote_roster_print_opts_v3') || 'null');
-  if (saved && PAPERS[saved.paper]) ROSTER_OPTS = { paper: saved.paper, pack: saved.pack !== false, packMax: clampPackMax(saved.packMax), sep: saved.sep === 'gap' ? 'gap' : 'line' };
+  if (saved && PAPERS[saved.paper]) ROSTER_OPTS = { paper: saved.paper, pack: saved.pack !== false, packMax: clampPackMax(saved.packMax), sep: saved.sep === 'gap' ? 'gap' : 'line', sort: ['gwaname', 'gwalist', 'keep'].indexOf(saved.sort) >= 0 ? saved.sort : 'gwaname' };
 } catch (e) { /* 저장된 설정을 못 읽으면 기본값(A3) */ }
 
 // 선택한 용지를 인쇄 설정(@page)에 반영
@@ -2514,6 +2578,7 @@ function renderPrintOptions() {
   document.querySelectorAll('.print-options').forEach(function (el) {
     el.innerHTML = '<label style="font-size:13px;">용지 <select class="po-paper" onchange="onPrintOptionChange(this)">' +
       '<option value="A3">A3 가로 (기본)</option><option value="A4">A4 가로 (70%로 축소)</option></select></label>' +
+      ' <label style="font-size:13px; margin-left:14px;">부서 안 정렬 <select class="po-sort" onchange="onPrintOptionChange(this)"><option value="gwaname">과별로 모아서 (번호·이름 순)</option><option value="gwalist">과별로 모아서 (명단 순서)</option><option value="keep">만든 순서 (예전 방식)</option></select></label>' +
       (el.closest('#printAllModalBackdrop') ? ' <label style="font-size:13px; margin-left:14px;"><input type="checkbox" class="po-pack" onchange="onPrintOptionChange(this)"> 작은 부서는 한 장에 모아 인쇄 (점선으로 구분)</label>' +
         ' <label style="font-size:13px;"><input type="number" class="po-packmax" min="1" max="29" style="width:52px;" onchange="onPrintOptionChange(this)"> 명 이하</label>' +
         ' <label style="font-size:13px; margin-left:8px;">구분 <select class="po-sep" onchange="onPrintOptionChange(this)"><option value="line">점선 ✂</option><option value="gap">간격만</option></select></label>' : '');
@@ -2522,16 +2587,18 @@ function renderPrintOptions() {
 }
 function syncPrintOptionControls() {
   document.querySelectorAll('.po-paper').forEach(function (e) { e.value = ROSTER_OPTS.paper; });
+  document.querySelectorAll('.po-sort').forEach(function (e) { e.value = ROSTER_OPTS.sort; });
   document.querySelectorAll('.po-pack').forEach(function (e) { e.checked = !!ROSTER_OPTS.pack; });
   document.querySelectorAll('.po-packmax').forEach(function (e) { e.value = ROSTER_OPTS.packMax; e.disabled = !ROSTER_OPTS.pack; });
   document.querySelectorAll('.po-sep').forEach(function (e) { e.value = ROSTER_OPTS.sep; e.disabled = !ROSTER_OPTS.pack; });
 }
-let lastPrintAllBatchId = undefined, lastPrintAllKeys = null;
+let lastPrintAllBatchId = undefined, lastPrintAllKeys = null, lastPrintAllShown = [];   // lastPrintAllShown: 인쇄 창에 올라온 폴더 [{name, key}]
 function onPrintOptionChange(el) {
   if (el.classList.contains('po-paper')) ROSTER_OPTS.paper = el.value;
   if (el.classList.contains('po-pack')) ROSTER_OPTS.pack = el.checked;
   if (el.classList.contains('po-packmax')) ROSTER_OPTS.packMax = clampPackMax(el.value);
   if (el.classList.contains('po-sep')) ROSTER_OPTS.sep = el.value === 'gap' ? 'gap' : 'line';
+  if (el.classList.contains('po-sort')) { ROSTER_OPTS.sort = el.value; rosterRefreshAll(); }   // 폴더 안 순서가 바뀌므로 화면용 묶음을 다시 계산
   saveRosterOpts();
   applyRosterColumns();
   syncPrintOptionControls();
