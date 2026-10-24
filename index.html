@@ -64,6 +64,12 @@
   /* ===== 연명부 표: 예시.xlsx 서식(제목 HY견고딕 18, 머리글 돋움 10 굵게·연회색, 본문 돋움 11, 바깥 굵은 테두리) + A3 가로 폭 꽉 채움, 한 장 30명 ===== */
   @media (max-width: 640px) { #logoMain, #logoLogin { max-width: 100%; width: auto; height: auto; max-height: 40px; object-fit: contain; } .wrap { padding-left: 10px; padding-right: 10px; } }
   .rt-pageno { text-align: center; font-size: 12px; color: #667; margin: 16px 0 6px; }
+  /* 작은 부서를 한 장에 모아 인쇄할 때, 표와 표 사이의 점선(가운데 가위 표시) */
+  .cut-gap { height: 40px; }   /* 점선 없이 표 사이를 비워 두는 구분 (약 10mm: 가위·재단기로 자를 여유) */
+  .folder-wrap { position: relative; display: inline-block; }
+  .folder-wrap .folder-pick { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; z-index: 2; cursor: pointer; }
+  .cut-line { display: flex; align-items: center; gap: 10px; height: 22px; font-size: 9pt; color: #000; white-space: nowrap; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .cut-line::before, .cut-line::after { content: ''; flex: 1; border-top: 1.5px dashed #000; }
   .roster-sheet { margin: 0 auto 10px; }
   .roster-table { table-layout: fixed; border-collapse: collapse; width: 100%; background: #fff;
     font-family: '돋움','Dotum','맑은 고딕','Malgun Gothic',sans-serif; font-size: 11pt; color: #000; white-space: nowrap; }
@@ -461,7 +467,13 @@
         </div>
       </div>
       <div class="sub" style="margin-bottom:12px;">폴더를 누르면 그 명단이 열립니다. (한 폴더 = 인쇄할 때 새 종이에서 시작하는 한 묶음)</div>
-      <div id="batchModalBody" style="display:flex; flex-wrap:wrap; gap:10px;"></div>
+      <div id="batchPickBar" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 10px;">
+          <button type="button" class="secondary" onclick="pickAllFolders(true)">전체 선택</button>
+          <button type="button" class="secondary" onclick="pickAllFolders(false)">선택 해제</button>
+          <button type="button" id="printPickedBtn" onclick="printSelectedFolders()" disabled>🖨 선택한 폴더 인쇄 (0개)</button>
+          <span style="font-size:12px; color:#666;">부서 카드 오른쪽 위 칸에 체크한 폴더만 한 번에 인쇄합니다.</span>
+        </div>
+        <div id="batchModalBody" style="display:flex; flex-wrap:wrap; gap:10px;"></div>
     </div>
   </div>
 
@@ -499,7 +511,7 @@
         <button onclick="window.print()">전체 인쇄하기</button>
         <span class="print-options" style="display:inline-flex; align-items:center; margin-left:8px;"></span>
       </div>
-      <div class="sub no-print">인쇄 방식: <b>폴더(부서 또는 투표구)마다 새 종이에서 시작</b>하고, 한 폴더 인원이 많으면 다음 장으로 이어지며 매 장 위에 제목·머리글이 반복됩니다. 폴더끼리 한 장에 섞이지 않습니다. (한 장에 <b id="printAllCap"></b>명씩) 인쇄창에서 프린터 대신 "PDF로 저장"을 고르면 같은 모양의 PDF 한 파일로도 받을 수 있습니다.</div>
+      <div class="sub no-print">인쇄 방식: <b>폴더(부서 또는 투표구)마다 새 종이에서 시작</b>하고, 한 폴더 인원이 많으면 다음 장으로 이어지며 매 장 위에 제목·머리글이 반복됩니다. 위쪽의 <b>"작은 부서는 한 장에 모아 인쇄"</b>가 켜져 있으면(기본, 10명 이하) 인원이 적은 부서는 한 장에 위아래로 모아 <b>점선(✂) 또는 빈 간격</b>("구분"에서 선택)으로 구분해 인쇄하니, 인쇄 후 잘라서 쓰세요(꺼 두면 폴더끼리 한 장에 섞이지 않습니다). (한 장에 <b id="printAllCap"></b>명씩) 인쇄창에서 프린터 대신 "PDF로 저장"을 고르면 같은 모양의 PDF 한 파일로도 받을 수 있습니다.</div>
       <div id="printAllContent"></div>
     </div>
   </div>
@@ -1205,12 +1217,14 @@ function namesPreview(list, label, max) {
 function planUpload(uploadedRows, current, mode) {
   const blockers = [];
   const idCount = {};
-  const noId = [], noDistrict = [], badDistrict = [];
+  const noId = [], noDistrict = [], badDistrict = [], noLocation = [], noDept = [];
   uploadedRows.forEach(function (u) {
     if (!u['사번']) { noId.push(u); return; }
     idCount[u['사번']] = (idCount[u['사번']] || 0) + 1;
     if (!u['투표구']) noDistrict.push(u);
     else if (!/^\d+$/.test(String(u['투표구']))) badDistrict.push(u);
+    if (!u['투표장소']) noLocation.push(u);   // 자동 진단은 투표장소·부서가 비면 "오류"로 세고 연명부에서 제외하므로 저장 전에 막음
+    if (!u['부서']) noDept.push(u);
   });
   const dupIds = Object.keys(idCount).filter(function (k) { return idCount[k] > 1; });
   if (dupIds.length > 0) {
@@ -1223,6 +1237,8 @@ function planUpload(uploadedRows, current, mode) {
   if (noId.length > 0) blockers.push('② 사번이 비어있는 사람이 ' + noId.length + '명 있습니다: ' + namesPreview(noId, function (u) { return u['성명']; }));
   if (noDistrict.length > 0) blockers.push('③ 투표구가 비어있는 사람이 ' + noDistrict.length + '명 있습니다: ' + namesPreview(noDistrict, function (u) { return u['성명']; }));
   if (badDistrict.length > 0) blockers.push('④ 투표구가 숫자가 아닌 사람이 ' + badDistrict.length + '명 있습니다 (예: "1번" → 1): ' + namesPreview(badDistrict, function (u) { return u['성명'] + '(' + u['투표구'] + ')'; }));
+  if (noLocation.length > 0) blockers.push('⑤ 투표장소가 비어있는 사람이 ' + noLocation.length + '명 있습니다' + (noLocation.length === uploadedRows.length ? ' (파일 전체가 비어 있습니다 — 투표장소 열의 값이 빠진 파일인지 확인해 주세요)' : '') + ': ' + namesPreview(noLocation, function (u) { return u['성명'] + '/' + u['투표구'] + '투표구'; }) + '\n   ※ 투표장소가 비면 기존 사람의 투표장소도 지워지고, 연명부에서 제외됩니다.');
+  if (noDept.length > 0) blockers.push('⑥ 부서가 비어있는 사람이 ' + noDept.length + '명 있습니다: ' + namesPreview(noDept, function (u) { return u['성명']; }));
 
   const byId = {};
   current.forEach(function (m) { if (m['사번']) byId[m['사번']] = m; });
@@ -1251,7 +1267,7 @@ function planUpload(uploadedRows, current, mode) {
   lines.push('· 정보가 바뀌는 사람: ' + changed.length + '명' + (changed.length ? '\n   ' + changed.slice(0, 8).map(function (c) {
     return c.u['성명'] + ': ' + c.diffs.map(function (f) { return f + ' ' + (c.e[f] || '(빈칸)') + '→' + (c.u[f] || '(빈칸)'); }).join(', ');
   }).join('\n   ') + (changed.length > 8 ? '\n   … 외 ' + (changed.length - 8) + '명' : '') : ''));
-  lines.push('· 사번 중복: 0건 / 사번·투표구 빈칸: 0명');
+  lines.push('· 사번 중복: 0건 / 사번·투표구·투표장소·부서 빈칸: 0명');
 
   return {
     blockers: blockers,
@@ -2201,20 +2217,49 @@ function buildRoster() {
 
 
 // ===== 묶음을 누르면 뜨는 폴더 목록 팝업 =====
+var folderPick = {};   // 묶음별로 체크한 폴더 { 묶음id: { 폴더키: true } } — 팝업을 다시 그려도 유지
+function pickedKeys(batch) { const p = folderPick[batch.id] || {}; return sortedGroupKeys(batch).filter(function (k) { return p[k]; }); }
+function updatePickBar() {
+  const batch = rosterBatches.find(function (b) { return b.id === currentBatchModalId; }), btn = document.getElementById('printPickedBtn');
+  if (!btn) return;
+  const n = batch ? pickedKeys(batch).length : 0;
+  btn.textContent = '🖨 선택한 폴더 인쇄 (' + n + '개)'; btn.disabled = n === 0;
+}
+function toggleFolderPick(el) {
+  const b = el.getAttribute('data-b'), k = el.getAttribute('data-k'); folderPick[b] = folderPick[b] || {};
+  if (el.checked) folderPick[b][k] = true; else delete folderPick[b][k];
+  updatePickBar();
+}
+function pickAllFolders(on) {
+  const batch = rosterBatches.find(function (b) { return b.id === currentBatchModalId; }); if (!batch) return;
+  folderPick[batch.id] = {}; if (on) sortedGroupKeys(batch).forEach(function (k) { folderPick[batch.id][k] = true; });
+  document.querySelectorAll('#batchModalBody .folder-pick').forEach(function (c) { c.checked = !!on; });
+  updatePickBar();
+}
+function printSelectedFolders() {
+  const batch = rosterBatches.find(function (b) { return b.id === currentBatchModalId; }); if (!batch) return;
+  const keys = pickedKeys(batch);
+  if (!keys.length) { alert('인쇄할 폴더에 먼저 체크해 주세요.'); return; }
+  openPrintAllModal(batch.id, keys);   // 폴더 목록 창은 그대로 두어, 인쇄 창을 닫으면 다시 고를 수 있음
+}
 function openBatchModal(batchId) {
   const batch = rosterBatches.find(function (b) { return b.id === batchId; });
   if (!batch) return;
   currentBatchModalId = batchId;
   const keys = sortedGroupKeys(batch);
   const total = keys.reduce(function (sum, k) { return sum + batch.groups[k].length; }, 0);
+  const picks = folderPick[batch.id] = folderPick[batch.id] || {};
+  Object.keys(picks).forEach(function (k) { if (!batch.groups[k]) delete picks[k]; });   // 없어진 폴더는 선택에서 뺌
   document.getElementById('batchModalTitle').textContent = batch.voteName + ' — 폴더 ' + keys.length + '개 (총 ' + total + '명)';
   document.getElementById('batchModalBody').innerHTML = keys.map(function (k) {
-    return '<button type="button" class="roster-folder" onclick="openRosterModal(\'' + batch.id + '\',\'' + jsAttr(k) + '\')">' +
+    return '<div class="folder-wrap"><input type="checkbox" class="folder-pick" title="인쇄할 폴더로 선택" data-b="' + escapeHtml(batch.id).replace(/"/g, '&quot;') + '" data-k="' + escapeHtml(k).replace(/"/g, '&quot;') + '"' + (picks[k] ? ' checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleFolderPick(this)">' +
+      '<button type="button" class="roster-folder" onclick="openRosterModal(\'' + batch.id + '\',\'' + jsAttr(k) + '\')">' +
       '<span class="icon">📁</span>' +
       '<span><span class="label">' + (batch.printed && batch.printed[k] ? '✔ ' : '') + escapeHtml(batch.groupMeta[k].label) + '</span><br>' +
-      '<span class="count">' + batch.groups[k].length + '명</span></span></button>';
+      '<span class="count">' + batch.groups[k].length + '명</span></span></button></div>';
   }).join('');
   document.getElementById('batchModalBackdrop').style.display = 'flex';
+  updatePickBar();
 }
 function closeBatchModal() {
   document.getElementById('batchModalBackdrop').style.display = 'none';
@@ -2333,28 +2378,82 @@ function closeRosterModal() {
 }
 
 /* ===================== 전체 인쇄 보기 (만들어둔 모든 묶음·폴더를 한 번에, 하나마다 새 페이지) ===================== */
-function openPrintAllModal(batchId) {
-  lastPrintAllBatchId = batchId;
+// 작은 부서 표 하나(제목+머리글+사람 줄). 번호는 1부터. 한 장에 여러 개를 모을 때 씀
+function rosterTableOnlyHtml(title, members) {
+  const total = ROSTER_COL_WIDTHS.reduce(function (a, b) { return a + b; }, 0);
+  const cols = ROSTER_COL_WIDTHS.map(function (w) { return '<col style="width:' + (w / total * 100).toFixed(3) + '%">'; }).join('');
+  const head = ROSTER_HEADERS.map(function (h) { return '<th>' + h + '</th>'; }).join('');
+  const rows = members.map(function (m, i) { return '<tr>' + rosterCells(m, i).map(function (v) { return '<td>' + escapeHtml(v) + '</td>'; }).join('') + '</tr>'; }).join('');
+  return '<table class="roster-table"><colgroup>' + cols + '</colgroup><thead><tr class="rt-title"><th colspan="' + ROSTER_HEADERS.length + '">' + escapeHtml(title) + '</th></tr><tr class="rt-head">' + head + '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
+// 한 장에 쓸 수 있는 높이(px, 용지 확대·축소 반영, 여유 14px)
+function printPageBudgetPx() {
+  const paper = PAPERS[ROSTER_OPTS.paper], mm = ROSTER_OPTS.paper === 'A3' ? 297 : 210, mg = paper.margin.split(/\s+/).map(parseFloat);
+  return Math.floor((mm - (mg[0] || 0) - (mg[2] != null ? mg[2] : (mg[0] || 0))) * 3.7795 / paper.zoom) - 14;
+}
+// 점선 가운데 가위 표시만 넣음 (글자 없음)
+function makeCutLine() { const d = document.createElement('div'); if (ROSTER_OPTS.sep === 'gap') { d.className = 'cut-gap'; return d; } d.className = 'cut-line'; d.textContent = '✂'; return d; }   // 점선(가위 표시) 또는 빈 간격
+// 전체 인쇄 내용을 만들어 content 에 넣음. 반환: { pages, packedFolders, packPages }
+function renderPrintAllSections(allGroups, content) {
+  const byBatch = [];
+  allGroups.forEach(function (g) { let b = byBatch[byBatch.length - 1]; if (!b || b.id !== g.batchId) { b = { id: g.batchId, groups: [] }; byBatch.push(b); } b.groups.push(g); });
+  const packOn = !!ROSTER_OPTS.pack, max = ROSTER_OPTS.packMax, budget = printPageBudgetPx();
+  let pages = 0, packedFolders = 0, packPages = 0;
+  byBatch.forEach(function (bt) {
+    const bigs = [], smalls = [];
+    bt.groups.forEach(function (g) { (packOn && g.members.length <= max ? smalls : bigs).push(g); });
+    bigs.forEach(function (g) {
+      const sec = document.createElement('div'); sec.className = 'print-section'; sec.innerHTML = buildRosterTableHtml(g.title, g.members); content.appendChild(sec);
+      pages += Math.max(1, Math.ceil(g.members.length / ROWS_PER_PAGE));
+    });
+    if (!smalls.length) return;
+    // 작은 부서 표를 숨은 곳에 먼저 그려 실제 높이를 잰 뒤, 한 장에 들어가는 만큼 위에서부터 채움
+    const meas = document.createElement('div'); meas.style.cssText = 'position:absolute; visibility:hidden; left:-99999px; top:0; width:' + SHEET_MM + 'mm;';
+    meas.innerHTML = smalls.map(function (g) { return rosterTableOnlyHtml(g.title, g.members); }).join('');
+    const probe = makeCutLine(); meas.appendChild(probe); content.appendChild(meas);
+    fitRosterTables(meas);
+    const tables = Array.from(meas.querySelectorAll('.roster-table')), heights = tables.map(function (t) { t.setAttribute('data-fitted', '1'); return t.getBoundingClientRect().height; }), cutH = probe.getBoundingClientRect().height;
+    const list = []; let cur = null;
+    smalls.forEach(function (g, i) {
+      const add = heights[i] + (cur && cur.items.length ? cutH : 0);
+      if (!cur || cur.h + add > budget) { cur = { items: [], h: 0 }; list.push(cur); }
+      cur.h += heights[i] + (cur.items.length ? cutH : 0); cur.items.push(i);
+    });
+    list.forEach(function (pg, pi) {
+      const sec = document.createElement('div'); sec.className = 'print-section';
+      const names = pg.items.map(function (i) { return smalls[i].label; }); const shown = names.slice(0, 6).join(', ') + (names.length > 6 ? ' 외 ' + (names.length - 6) + '개' : '');
+      const lab = document.createElement('div'); lab.className = 'rt-pageno no-print'; lab.textContent = '작은 부서 모음 ' + (pi + 1) + ' / ' + list.length + '쪽 · 부서 ' + pg.items.length + '개 (' + shown + ') · 인쇄 후 ' + (ROSTER_OPTS.sep === 'gap' ? '표 사이 빈 공간에서' : '점선을 따라') + ' 자르세요';
+      const sheet = document.createElement('div'); sheet.className = 'roster-sheet pack'; sheet.style.width = SHEET_MM + 'mm';
+      pg.items.forEach(function (idx, k) { if (k) sheet.appendChild(makeCutLine()); sheet.appendChild(tables[idx]); });
+      sec.appendChild(lab); sec.appendChild(sheet); content.appendChild(sec);
+    });
+    content.removeChild(meas);
+    pages += list.length; packedFolders += smalls.length; packPages += list.length;
+  });
+  fitRosterTables(content);   // 큰 부서 표만 한꺼번에 글자 맞춤 (작은 부서 표는 이미 맞춤)
+  return { pages: pages, packedFolders: packedFolders, packPages: packPages };
+}
+
+function openPrintAllModal(batchId, onlyKeys) {   // onlyKeys: 골라서 인쇄할 폴더 키 목록(없으면 전부)
+  lastPrintAllBatchId = batchId; lastPrintAllKeys = onlyKeys && onlyKeys.length ? onlyKeys.slice() : null;
   document.getElementById('rosterModalBackdrop').style.display = 'none';   // 다른 팝업이 같이 인쇄되지 않게 닫음
   const batches = batchId ? rosterBatches.filter(function (b) { return b.id === batchId; }) : rosterBatches;
   if (!confirmPrintUnsaved(batches)) return;
   const allGroups = [];
   batches.forEach(function (batch) {
-    sortedGroupKeys(batch).forEach(function (k) {
-      allGroups.push({ title: batch.printTitle || DEFAULT_PRINT_TITLE, members: batch.groups[k], label: batch.groupMeta[k].label });
+    sortedGroupKeys(batch).filter(function (k) { return !lastPrintAllKeys || lastPrintAllKeys.indexOf(k) >= 0; }).forEach(function (k) {
+      allGroups.push({ title: batch.printTitle || DEFAULT_PRINT_TITLE, members: batch.groups[k], label: batch.groupMeta[k].label, batchId: batch.id });
     });
   });
   if (allGroups.length === 0) { alert('먼저 연명부를 생성해 주세요.'); return; }
 
-  const pagesEstimate = allGroups.reduce(function (sum, g) { return sum + Math.max(1, Math.ceil(g.members.length / ROWS_PER_PAGE)); }, 0);
-  document.getElementById('printAllTitle').textContent =
-    (batchId ? batches[0].voteName + ' 전체 인쇄' : '전체 연명부 인쇄') + ' — 폴더 ' + allGroups.length + '개, ' + ROSTER_OPTS.paper + ' ' + pagesEstimate + '장';
+  const content = document.getElementById('printAllContent'); content.innerHTML = '';
+  document.getElementById('printAllModalBackdrop').style.display = 'flex';   // 크기를 재야 해서 먼저 보이게 함
   document.getElementById('printAllCap').textContent = ROWS_PER_PAGE;
-  document.getElementById('printAllContent').innerHTML = allGroups.map(function (g) {
-    return '<div class="print-section">' + buildRosterTableHtml(g.title, g.members) + '</div>';
-  }).join('');
-  document.getElementById('printAllModalBackdrop').style.display = 'flex';
-  fitRosterTables(document.getElementById('printAllContent'));
+  const info = renderPrintAllSections(allGroups, content);
+  document.getElementById('printAllTitle').textContent =
+    (lastPrintAllKeys ? batches[0].voteName + ' — 선택한 폴더 인쇄' : batchId ? batches[0].voteName + ' 전체 인쇄' : '전체 연명부 인쇄') + ' — 폴더 ' + allGroups.length + '개, ' + ROSTER_OPTS.paper + ' ' + info.pages + '장' +
+    (info.packedFolders ? ' (작은 부서 ' + info.packedFolders + '개를 ' + info.packPages + '장에 모아 인쇄 — ' + (ROSTER_OPTS.sep === 'gap' ? '표 사이 빈 공간에서' : '점선을 따라') + ' 자르세요)' : '');
 }
 
 function closePrintAllModal() {
@@ -2391,10 +2490,11 @@ const ROSTER_FIELD = {
   '사번': function (m) { return m['사번'] || ''; }, '성명': function (m) { return m['성명'] || ''; },
   '투표장소': function (m) { return m['투표장소'] || ''; }, '서명': function () { return ''; }
 };
-let ROSTER_OPTS = { paper: 'A3' };
+function clampPackMax(v) { v = parseInt(v, 10); return isFinite(v) ? Math.min(29, Math.max(1, v)) : 10; }
+let ROSTER_OPTS = { paper: 'A3', pack: true, packMax: 10, sep: 'line' };   // sep: 'line' 점선(✂) / 'gap' 간격만   // pack: 작은 부서를 한 장에 모아 인쇄(점선 구분) / packMax: 몇 명 이하를 작은 부서로 볼지
 try {
   const saved = JSON.parse(localStorage.getItem('vote_roster_print_opts_v3') || 'null');
-  if (saved && PAPERS[saved.paper]) ROSTER_OPTS = { paper: saved.paper };
+  if (saved && PAPERS[saved.paper]) ROSTER_OPTS = { paper: saved.paper, pack: saved.pack !== false, packMax: clampPackMax(saved.packMax), sep: saved.sep === 'gap' ? 'gap' : 'line' };
 } catch (e) { /* 저장된 설정을 못 읽으면 기본값(A3) */ }
 
 // 선택한 용지를 인쇄 설정(@page)에 반영
@@ -2413,22 +2513,31 @@ function saveRosterOpts() {
 function renderPrintOptions() {
   document.querySelectorAll('.print-options').forEach(function (el) {
     el.innerHTML = '<label style="font-size:13px;">용지 <select class="po-paper" onchange="onPrintOptionChange(this)">' +
-      '<option value="A3">A3 가로 (기본)</option><option value="A4">A4 가로 (70%로 축소)</option></select></label>';
+      '<option value="A3">A3 가로 (기본)</option><option value="A4">A4 가로 (70%로 축소)</option></select></label>' +
+      (el.closest('#printAllModalBackdrop') ? ' <label style="font-size:13px; margin-left:14px;"><input type="checkbox" class="po-pack" onchange="onPrintOptionChange(this)"> 작은 부서는 한 장에 모아 인쇄 (점선으로 구분)</label>' +
+        ' <label style="font-size:13px;"><input type="number" class="po-packmax" min="1" max="29" style="width:52px;" onchange="onPrintOptionChange(this)"> 명 이하</label>' +
+        ' <label style="font-size:13px; margin-left:8px;">구분 <select class="po-sep" onchange="onPrintOptionChange(this)"><option value="line">점선 ✂</option><option value="gap">간격만</option></select></label>' : '');
   });
   syncPrintOptionControls();
 }
 function syncPrintOptionControls() {
   document.querySelectorAll('.po-paper').forEach(function (e) { e.value = ROSTER_OPTS.paper; });
+  document.querySelectorAll('.po-pack').forEach(function (e) { e.checked = !!ROSTER_OPTS.pack; });
+  document.querySelectorAll('.po-packmax').forEach(function (e) { e.value = ROSTER_OPTS.packMax; e.disabled = !ROSTER_OPTS.pack; });
+  document.querySelectorAll('.po-sep').forEach(function (e) { e.value = ROSTER_OPTS.sep; e.disabled = !ROSTER_OPTS.pack; });
 }
-let lastPrintAllBatchId = undefined;
+let lastPrintAllBatchId = undefined, lastPrintAllKeys = null;
 function onPrintOptionChange(el) {
   if (el.classList.contains('po-paper')) ROSTER_OPTS.paper = el.value;
+  if (el.classList.contains('po-pack')) ROSTER_OPTS.pack = el.checked;
+  if (el.classList.contains('po-packmax')) ROSTER_OPTS.packMax = clampPackMax(el.value);
+  if (el.classList.contains('po-sep')) ROSTER_OPTS.sep = el.value === 'gap' ? 'gap' : 'line';
   saveRosterOpts();
   applyRosterColumns();
   syncPrintOptionControls();
   // 열려 있는 팝업은 새 설정으로 바로 다시 그림
   if (document.getElementById('rosterModalBackdrop').style.display === 'flex') openRosterModal(currentOpenBatchId, currentRosterGroup);
-  if (document.getElementById('printAllModalBackdrop').style.display === 'flex') openPrintAllModal(lastPrintAllBatchId);
+  if (document.getElementById('printAllModalBackdrop').style.display === 'flex') openPrintAllModal(lastPrintAllBatchId, lastPrintAllKeys);
 }
 
 function getPrintTitle() {
@@ -2464,7 +2573,7 @@ function buildRosterTableHtml(title, members) {
 // 칸보다 넘치는 글씨를 한 칸 안에 다 들어오게 맞춤
 //  1순위: 그 열의 글자 크기를 줄임(최소 8pt)  /  2순위: 그래도 안 들어가는 칸(아주 긴 이름 등)만 두 줄로 나눠 넣음
 function fitRosterTables(root) {
-  (root || document).querySelectorAll('.roster-table').forEach(function (table) {
+  (root || document).querySelectorAll('.roster-table:not([data-fitted])').forEach(function (table) {
     const body = table.tBodies[0];
     if (!body) return;
     const rows = body.rows;
