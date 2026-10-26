@@ -445,6 +445,7 @@
   <!-- 연명부 폴더 목록 -->
   <div class="panel no-print" id="rosterFoldersPanel" style="display:none;">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <div id="rosterFixBanner" style="display:none; background:#fff4e5; color:#8a4b00; border:1px solid #f0c78a; border-radius:8px; padding:10px 14px; margin-bottom:10px; font-size:13px;"></div>
       <div id="rosterFoldersHeading" style="font-weight:700; font-size:16px;"></div>
       <div style="display:flex; gap:8px;">
         <button class="ghost" onclick="checkRosterCoverage()">✅ 연명부 검수</button>
@@ -1707,15 +1708,17 @@ function duplicateError(details, what) {
   e.isDuplicate = true; e.details = details; return e;
 }
 // 저장 직전 안전 검사: 기존 연명부 기록·사번이 하나라도 줄어들면 저장하지 않음
-function assertNoLoss(prev, next, purged) {
+function assertNoLoss(prev, next, purged, moved) {
   Object.keys(prev.chunks).forEach(function (id) {
     const a = prev.chunks[id], b = next.chunks[id];
     const bad = function (why) { throw new Error('내부 안전 검사 실패(' + why + '): 기존 연명부 기록이 사라질 수 있어 저장을 중단했습니다.'); };
     if (!b) { if (purged && purged.indexOf(id) >= 0 && a.status === 'deleted') return; bad('묶음 누락'); }   // 예외는 "이미 삭제 상태이고 정리 목록에 명시된" 묶음뿐 (활성·보관 묶음은 목록에 넣어도 막힘)
+    const inChunk = {};   // 정정(moved)일 때만: 이 묶음의 어느 폴더든 들어 있으면 옮겨 간 것으로 인정 (묶음 밖으로 사라지면 그대로 막힘)
+    if (moved) Object.keys(b.groups).forEach(function (k) { b.groups[k].empids.forEach(function (e) { inChunk[e] = 1; }); });
     Object.keys(a.groups).forEach(function (k) {
       const bg = b.groups[k]; if (!bg) bad('폴더 누락');
       const set = {}; bg.empids.forEach(function (e) { set[e] = 1; });
-      a.groups[k].empids.forEach(function (e) { if (!set[e]) bad('사번 누락'); });
+      a.groups[k].empids.forEach(function (e) { if (!set[e] && !(moved && inChunk[e])) bad('사번 누락'); });
     });
     if ((b.history || []).length < (a.history || []).length) bad('이력 누락');
   });
@@ -1728,7 +1731,7 @@ async function ledgerMutate(message, mutator) {
     const out = mutator(work) || {};                                    // ② 최신본으로 검사 (중복이면 예외 → 저장하지 않음)
     if (out.noop) { ledger = { data: cur.data, sha: cur.sha }; return out; }
     work.schema = 2; work.rev = (cur.data.rev || 0) + 1; work.updatedAt = nowIso(); work.updatedBy = WORKER;
-    assertNoLoss(cur.data, work, out.purged);
+    assertNoLoss(cur.data, work, out.purged, out.moved);
     try {
       const res = await ghPutJson(LEDGER_PATH, work, message + ' — 작업자: ' + WORKER, cur.sha);   // ③ 읽은 그 버전일 때만 저장 (sha 비교)
       ledger = { data: work, sha: res && res.content && res.content.sha || null }; ledgerEpoch++;   // 확정된 것만 화면 기준으로 삼음
@@ -2082,6 +2085,69 @@ async function togglePrinted() {
   });
   if (ok2) updatePrintedBtn();
 }
+// ----- 명단 정정 반영: 명단에서 투표구·부서가 바뀐 사람을, 같은 묶음 안의 새 폴더로 옮김 -----
+function correctionPlan() {   // 옮길 사람 목록 (저장된 활성 묶음 기준)
+  const by = memberMapByEmpid(), plan = [];
+  viewChunks().forEach(function (c) {
+    if (c.status !== 'active') return;
+    Object.keys(c.groups).forEach(function (k) {
+      c.groups[k].empids.forEach(function (e) {
+        const m = by[e]; if (!m) return;                          // 명단에서 빠진 사람은 옮기지 않음
+        const ng = groupKeyAndLabel(m, c.groupBy); if (ng.key === k) return;
+        plan.push({ voteName: c.voteName, e: e, name: m['성명'], from: c.groups[k].label || k, to: ng.label, saved: !!c._saved });
+      });
+    });
+  });
+  return plan;
+}
+async function applyRosterCorrections() {
+  if (!requireRosterWrite()) return;
+  const plan = correctionPlan();
+  if (!plan.length) { alert('정정해서 옮길 사람이 없습니다.'); return; }
+  if (plan.some(function (x) { return !x.saved; })) { alert('아직 저장소에 저장되지 않은 연명부가 있어 정정할 수 없습니다.\n먼저 저장하거나 "임시 저장 삭제"를 한 뒤 다시 눌러 주세요.'); return; }
+  const folders = {}; plan.forEach(function (x) { folders[x.voteName + '／' + x.from] = 1; folders[x.voteName + '／' + x.to] = 1; });
+  const lines = plan.slice(0, 8).map(function (x) { return '· ' + x.name + ' (' + x.voteName + '): ' + x.from + ' → ' + x.to; });
+  if (!confirm('명단이 바뀐 ' + plan.length + '명을 새 폴더로 옮깁니다.\n\n' + lines.join('\n') + (plan.length > 8 ? '\n… 외 ' + (plan.length - 8) + '명' : '') +
+    '\n\n· 사람이 늘거나 줄지 않고, 같은 묶음 안에서 폴더만 바뀝니다.\n· 옮겨지는 폴더 ' + Object.keys(folders).length + '개(이전·새 폴더)는 내용이 달라지므로 "인쇄함" 표시가 해제됩니다. 이미 인쇄한 종이는 다시 인쇄해야 합니다.\n· 명단에서 빠진 사람은 옮기지 않습니다.\n\n계속할까요?')) return;
+  let moved = 0;
+  const done = await ledgerAction('명단 정정 반영: ' + plan.length + '명', function (w) {
+    const by = memberMapByEmpid(); moved = 0;
+    Object.keys(w.chunks).forEach(function (id) {
+      const c = w.chunks[id]; if (c.status !== 'active') return;
+      const todo = [];
+      Object.keys(c.groups).forEach(function (k) {
+        const g = c.groups[k];
+        g.empids = g.empids.filter(function (e) {
+          const m = by[e]; if (!m) return true;
+          const ng = groupKeyAndLabel(m, c.groupBy); if (ng.key === k) return true;
+          todo.push({ e: e, m: m, ng: ng, from: k }); return false;
+        });
+      });
+      todo.forEach(function (t) {
+        const tg = c.groups[t.ng.key] = c.groups[t.ng.key] || { label: t.ng.label, district: t.ng.district, dept: t.ng.dept, empids: [], printedAt: null, printedBy: null };
+        if (tg.empids.indexOf(t.e) < 0) tg.empids.push(t.e);
+        tg.printedAt = null; tg.printedBy = null; c.groups[t.from].printedAt = null; c.groups[t.from].printedBy = null;   // 내용이 바뀐 폴더는 다시 인쇄해야 하므로 인쇄함 해제
+        pushHistory(c, '정정 반영', t.m['성명'] + ': ' + (c.groups[t.from].label || t.from) + ' → ' + t.ng.label); moved++;
+      });
+    });
+    if (!moved) throw new Error('옮길 사람이 없습니다. (이미 정정되었거나 다른 관리자가 처리했습니다)');
+    return { moved: true };
+  }, null);
+  if (done) {
+    showGlobalOk(moved + '명을 새 폴더로 옮겼습니다. 옮겨진 폴더 ' + Object.keys(folders).length + '개는 "인쇄함" 표시가 해제되었으니 필요한 폴더를 다시 인쇄해 주세요.');
+    if (document.getElementById('checkModalBackdrop') && document.getElementById('checkModalBackdrop').style.display === 'flex') checkRosterCoverage();
+  }
+}
+function updateFixBanner() {
+  const el = document.getElementById('rosterFixBanner'); if (!el) return;
+  const moves = rosterChangedMembers.filter(function (c) { return c.why === '투표구·부서가 바뀜'; }), gone = rosterChangedMembers.filter(function (c) { return c.why === '명단에서 빠짐'; });
+  if (!moves.length && !gone.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const names = moves.slice(0, 3).map(function (c) { return escapeHtml(c.name); }).join(', ');
+  el.style.display = '';
+  el.innerHTML = (moves.length ? '<div>⚠ <b>명단이 바뀌어 연명부 폴더가 달라진 사람 ' + moves.length + '명</b> (' + names + (moves.length > 3 ? ' 외' : '') + ') — 지금 상태로 인쇄하면 <b>이 사람들이 빠집니다.</b> ' +
+      (CAN_WRITE ? '<button type="button" onclick="applyRosterCorrections()" style="margin-left:8px;">정정 반영하기</button>' : '(정정은 쓰기 권한이 있는 관리자가 합니다)') + '</div>' : '') +
+    (gone.length ? '<div style="margin-top:4px;">명단에서 빠진 사람 ' + gone.length + '명은 자동으로 옮길 수 없습니다. "연명부 검수"에서 확인해 주세요.</div>' : '');
+}
 // 여러 폴더를 한 번에 "인쇄함"으로 기록 (누가·언제는 원장과 작업 이력에 남음)
 async function markFoldersPrinted(items) {
   if (!items.length || !requireRosterWrite()) return false;
@@ -2126,6 +2192,7 @@ function openArchiveModal() {
   }).join('') : '<div class="diag-details">보관된 작업이 없습니다.</div>';
   if (rosterChangedMembers.length) {
     html += '<div style="margin-top:10px; font-weight:700;">명단이 바뀌어 폴더에서 빠진 사람 ' + rosterChangedMembers.length + '명</div>' +
+      (CAN_WRITE && rosterChangedMembers.some(function (c) { return c.why === '투표구·부서가 바뀜'; }) ? '<div style="margin:6px 0;"><button type="button" onclick="applyRosterCorrections()">✔ 명단 변경 반영 (바뀐 사람을 새 폴더로 옮기기)</button></div>' : '') +
       rosterChangedMembers.slice(0, 20).map(function (x) { return '<div class="diag-item bad"><span>' + escapeHtml(x.name) + ' <span style="color:#888;">(' + escapeHtml(x.voteName) + ')</span></span><span class="badge">' + escapeHtml(x.why) + '</span></div>'; }).join('') +
       (rosterChangedMembers.length > 20 ? '<div class="diag-details">… 외 ' + (rosterChangedMembers.length - 20) + '명</div>' : '');
   }
@@ -2359,6 +2426,7 @@ function sortedGroupKeys(batch) {
 }
 
 function renderRosterFolders(autoOpen) {
+  updateFixBanner();
   const panel = document.getElementById('rosterFoldersPanel');
   const foldersEl = document.getElementById('rosterFolders');
 
