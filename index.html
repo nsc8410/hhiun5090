@@ -2540,7 +2540,35 @@ function printPageBudgetPx() {
 // 점선 가운데 가위 표시만 넣음 (글자 없음)
 function makeCutLine() { const d = document.createElement('div'); if (ROSTER_OPTS.sep === 'gap') { d.className = 'cut-gap'; return d; } d.className = 'cut-line'; d.textContent = '✂'; return d; }   // 점선(가위 표시) 또는 빈 간격
 // 전체 인쇄 내용을 만들어 content 에 넣음. 반환: { pages, packedFolders, packPages }
+// 선택한 폴더를 부서 경계 없이 이어서: 한 장에 30명씩 채우고, 제목·머리글은 장마다 한 번, 번호는 처음부터 끝까지 이어서, 부서가 바뀌는 줄은 굵은 선
+function renderFlowSections(allGroups, content) {
+  const byBatch = [];
+  allGroups.forEach(function (g) { let b = byBatch[byBatch.length - 1]; if (!b || b.id !== g.batchId) { b = { id: g.batchId, groups: [] }; byBatch.push(b); } b.groups.push(g); });
+  let pages = 0, idx = 0;
+  byBatch.forEach(function (bt) {
+    const rows = []; bt.groups.forEach(function (g, gi) { g.members.forEach(function (m, i) { rows.push({ m: m, start: i === 0 && gi > 0 }); }); });
+    const np = Math.max(1, Math.ceil(rows.length / ROWS_PER_PAGE));
+    for (let p = 0; p < np; p++) {
+      const chunk = rows.slice(p * ROWS_PER_PAGE, (p + 1) * ROWS_PER_PAGE), first = idx + 1;
+      const sec = document.createElement('div'); sec.className = 'print-section';
+      const lab = document.createElement('div'); lab.className = 'rt-pageno no-print'; lab.textContent = '이어서 인쇄 ' + (p + 1) + ' / ' + np + '쪽 · ' + first + '~' + (idx + chunk.length) + '번 (제목은 장마다 한 번, 번호는 이어서, 부서가 바뀌는 곳은 굵은 선)';
+      const sheet = document.createElement('div'); sheet.className = 'roster-sheet flow'; sheet.style.width = SHEET_MM + 'mm';
+      sheet.innerHTML = rosterFlowTableHtml(bt.groups[0].title, chunk, idx);
+      sec.appendChild(lab); sec.appendChild(sheet); content.appendChild(sec); idx += chunk.length; pages++;
+    }
+  });
+  fitRosterTables(content);
+  return { pages: pages, packedFolders: 0, packPages: 0, flow: true, people: idx };
+}
+function rosterFlowTableHtml(title, chunk, startIdx) {
+  const total = ROSTER_COL_WIDTHS.reduce(function (a, b) { return a + b; }, 0);
+  const cols = ROSTER_COL_WIDTHS.map(function (w) { return '<col style="width:' + (w / total * 100).toFixed(3) + '%">'; }).join('');
+  const head = ROSTER_HEADERS.map(function (h) { return '<th>' + h + '</th>'; }).join('');
+  const rows = chunk.map(function (r, i) { return '<tr' + (r.start && i > 0 ? ' class="dept-start"' : '') + '>' + rosterCells(r.m, startIdx + i).map(function (v) { return '<td>' + escapeHtml(v) + '</td>'; }).join('') + '</tr>'; }).join('');
+  return '<table class="roster-table"><colgroup>' + cols + '</colgroup><thead><tr class="rt-title"><th colspan="' + ROSTER_HEADERS.length + '">' + escapeHtml(title) + '</th></tr><tr class="rt-head">' + head + '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
 function renderPrintAllSections(allGroups, content) {
+  if (ROSTER_OPTS.flow && lastPrintAllKeys) return renderFlowSections(allGroups, content);   // 선택 인쇄일 때만
   const byBatch = [];
   allGroups.forEach(function (g) { let b = byBatch[byBatch.length - 1]; if (!b || b.id !== g.batchId) { b = { id: g.batchId, groups: [] }; byBatch.push(b); } b.groups.push(g); });
   const packOn = !!ROSTER_OPTS.pack, max = ROSTER_OPTS.packMax, budget = printPageBudgetPx();
@@ -2615,8 +2643,13 @@ function openPrintAllModal(batchId, onlyKeys) {   // onlyKeys: 골라서 인쇄�
   document.getElementById('printAllModalBackdrop').style.display = 'flex';   // 크기를 재야 해서 먼저 보이게 함
   document.getElementById('printAllCap').textContent = ROWS_PER_PAGE;
   const info = renderPrintAllSections(allGroups, content);
+  const flowOn = !!(ROSTER_OPTS.flow && lastPrintAllKeys);   // 선택 인쇄를 이어서 찍는 동안에는 모으기 옵션이 필요 없음
+  syncPrintOptionControls();
+  document.querySelectorAll('.po-pack').forEach(function (e) { e.disabled = false; });   // 이어서 인쇄를 껐을 때 다시 켜지도록 먼저 풀어 둠
+  document.querySelectorAll('.po-flow').forEach(function (e) { e.disabled = !lastPrintAllKeys; });
+  if (flowOn) document.querySelectorAll('.po-pack, .po-packmax, .po-pstyle, .po-sep').forEach(function (e) { e.disabled = true; });
   document.getElementById('printAllTitle').textContent =
-    (lastPrintAllKeys ? batches[0].voteName + ' — 선택한 폴더 인쇄' : batchId ? batches[0].voteName + ' 전체 인쇄' : '전체 연명부 인쇄') + ' — 폴더 ' + allGroups.length + '개, ' + ROSTER_OPTS.paper + ' ' + info.pages + '장' +
+    (lastPrintAllKeys ? batches[0].voteName + ' — 선택한 폴더 인쇄' : batchId ? batches[0].voteName + ' 전체 인쇄' : '전체 연명부 인쇄') + ' — 폴더 ' + allGroups.length + '개, ' + ROSTER_OPTS.paper + ' ' + info.pages + '장' + (info.flow ? ' (선택한 ' + allGroups.length + '개 폴더 ' + info.people + '명을 이어서 인쇄 — 제목은 장마다 한 번, 번호는 처음부터 끝까지 이어서)' : '') +
     (info.packedFolders ? ' (작은 부서 ' + info.packedFolders + '개를 ' + info.packPages + '장에 모아 인쇄 — ' + (ROSTER_OPTS.packStyle === 'once' ? '제목은 한 번만, 번호는 이어서' : ROSTER_OPTS.sep === 'gap' ? '표 사이 빈 공간에서 자르세요' : '점선을 따라 자르세요') + ')' : '');
 }
 
@@ -2655,10 +2688,10 @@ const ROSTER_FIELD = {
   '투표장소': function (m) { return m['투표장소'] || ''; }, '서명': function () { return ''; }
 };
 function clampPackMax(v) { v = parseInt(v, 10); return isFinite(v) ? Math.min(29, Math.max(1, v)) : 10; }
-let ROSTER_OPTS = { paper: 'A3', pack: true, packMax: 10, sep: 'line', sort: 'gwaname', packStyle: 'once' };   // packStyle: 'once' 모은 장에 제목 한 번·번호 이어서 / 'each' 부서마다 따로(잘라서 쓰기)   // sort: 'gwaname' 과별(번호·이름순) / 'gwalist' 과별(명단 순서) / 'keep' 만든 순서(예전)   // sep: 'line' 점선(✂) / 'gap' 간격만   // pack: 작은 부서를 한 장에 모아 인쇄(점선 구분) / packMax: 몇 명 이하를 작은 부서로 볼지
+let ROSTER_OPTS = { paper: 'A3', pack: true, packMax: 10, sep: 'line', sort: 'gwaname', packStyle: 'once', flow: true };   // flow: 선택한 폴더는 부서 경계 없이 이어서 인쇄   // packStyle: 'once' 모은 장에 제목 한 번·번호 이어서 / 'each' 부서마다 따로(잘라서 쓰기)   // sort: 'gwaname' 과별(번호·이름순) / 'gwalist' 과별(명단 순서) / 'keep' 만든 순서(예전)   // sep: 'line' 점선(✂) / 'gap' 간격만   // pack: 작은 부서를 한 장에 모아 인쇄(점선 구분) / packMax: 몇 명 이하를 작은 부서로 볼지
 try {
   const saved = JSON.parse(localStorage.getItem('vote_roster_print_opts_v3') || 'null');
-  if (saved && PAPERS[saved.paper]) ROSTER_OPTS = { paper: saved.paper, pack: saved.pack !== false, packMax: clampPackMax(saved.packMax), sep: saved.sep === 'gap' ? 'gap' : 'line', sort: ['gwaname', 'gwalist', 'keep'].indexOf(saved.sort) >= 0 ? saved.sort : 'gwaname', packStyle: saved.packStyle === 'each' ? 'each' : 'once' };
+  if (saved && PAPERS[saved.paper]) ROSTER_OPTS = { paper: saved.paper, pack: saved.pack !== false, packMax: clampPackMax(saved.packMax), sep: saved.sep === 'gap' ? 'gap' : 'line', sort: ['gwaname', 'gwalist', 'keep'].indexOf(saved.sort) >= 0 ? saved.sort : 'gwaname', packStyle: saved.packStyle === 'each' ? 'each' : 'once', flow: saved.flow !== false };
 } catch (e) { /* 저장된 설정을 못 읽으면 기본값(A3) */ }
 
 // 선택한 용지를 인쇄 설정(@page)에 반영
@@ -2679,7 +2712,7 @@ function renderPrintOptions() {
     el.innerHTML = '<label style="font-size:13px;">용지 <select class="po-paper" onchange="onPrintOptionChange(this)">' +
       '<option value="A3">A3 가로 (기본)</option><option value="A4">A4 가로 (70%로 축소)</option></select></label>' +
       ' <label style="font-size:13px; margin-left:14px;">부서 안 정렬 <select class="po-sort" onchange="onPrintOptionChange(this)"><option value="gwaname">과별로 모아서 (번호·이름 순)</option><option value="gwalist">과별로 모아서 (명단 순서)</option><option value="keep">만든 순서 (예전 방식)</option></select></label>' +
-      (el.closest('#printAllModalBackdrop') ? ' <label style="font-size:13px; margin-left:14px;"><input type="checkbox" class="po-pack" onchange="onPrintOptionChange(this)"> 작은 부서는 한 장에 모아 인쇄 (점선으로 구분)</label>' +
+      (el.closest('#printAllModalBackdrop') ? ' <label style="font-size:13px; margin-left:14px;"><input type="checkbox" class="po-flow" onchange="onPrintOptionChange(this)"> 선택 인쇄는 이어서 (제목 한 번·번호 이어서)</label> <label style="font-size:13px; margin-left:14px;"><input type="checkbox" class="po-pack" onchange="onPrintOptionChange(this)"> 작은 부서는 한 장에 모아 인쇄 (점선으로 구분)</label>' +
         ' <label style="font-size:13px;"><input type="number" class="po-packmax" min="1" max="29" style="width:52px;" onchange="onPrintOptionChange(this)"> 명 이하</label>' +
         ' <label style="font-size:13px; margin-left:8px;">모은 장 <select class="po-pstyle" onchange="onPrintOptionChange(this)"><option value="once">제목 한 번 · 번호 이어서</option><option value="each">부서마다 따로 (잘라서 쓰기)</option></select></label>' +
         ' <label style="font-size:13px; margin-left:8px;">구분 <select class="po-sep" onchange="onPrintOptionChange(this)"><option value="line">점선 ✂</option><option value="gap">간격만</option></select></label>' : '');
@@ -2688,6 +2721,7 @@ function renderPrintOptions() {
 }
 function syncPrintOptionControls() {
   document.querySelectorAll('.po-paper').forEach(function (e) { e.value = ROSTER_OPTS.paper; });
+  document.querySelectorAll('.po-flow').forEach(function (e) { e.checked = !!ROSTER_OPTS.flow; });
   document.querySelectorAll('.po-sort').forEach(function (e) { e.value = ROSTER_OPTS.sort; });
   document.querySelectorAll('.po-pack').forEach(function (e) { e.checked = !!ROSTER_OPTS.pack; });
   document.querySelectorAll('.po-packmax').forEach(function (e) { e.value = ROSTER_OPTS.packMax; e.disabled = !ROSTER_OPTS.pack; });
@@ -2697,6 +2731,7 @@ function syncPrintOptionControls() {
 let lastPrintAllBatchId = undefined, lastPrintAllKeys = null, lastPrintAllShown = [];   // lastPrintAllShown: 인쇄 창에 올라온 폴더 [{name, key}]
 function onPrintOptionChange(el) {
   if (el.classList.contains('po-paper')) ROSTER_OPTS.paper = el.value;
+  if (el.classList.contains('po-flow')) ROSTER_OPTS.flow = el.checked;
   if (el.classList.contains('po-pack')) ROSTER_OPTS.pack = el.checked;
   if (el.classList.contains('po-packmax')) ROSTER_OPTS.packMax = clampPackMax(el.value);
   if (el.classList.contains('po-sep')) ROSTER_OPTS.sep = el.value === 'gap' ? 'gap' : 'line';
