@@ -68,6 +68,8 @@
   .roster-folder.printed { background: #eaf6ec; border-color: #43a047; }
   .roster-folder .pmark { font-size: 11px; color: #2e7d32; font-weight: 700; }
   .roster-table tbody tr.dept-start td { border-top: 2.5px solid #000 !important; }   /* 한 표로 이어 찍을 때, 부서가 바뀌는 곳의 굵은 선 */
+  .col-team { display: none; }   /* 명단에 팀 값이 하나라도 있으면 body.has-team 으로 보임 */
+  body.has-team .col-team { display: table-cell; }
   .cut-gap { height: 40px; }   /* 점선 없이 표 사이를 비워 두는 구분 (약 10mm: 가위·재단기로 자를 여유) */
   .folder-wrap { position: relative; display: inline-block; }
   .folder-wrap .folder-pick { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; z-index: 2; cursor: pointer; }
@@ -377,11 +379,11 @@
         <thead>
           <tr>
             <th style="width:36px;"></th>
-            <th>성명</th><th>사업본부</th><th>부서</th><th>과</th><th>직위</th><th>사번</th>
+            <th>성명</th><th>사업본부</th><th>부서</th><th>과</th><th class="col-team">팀</th><th>직위</th><th>사번</th>
             <th>근무지</th><th>재직구분</th><th>투표장소</th><th>투표구</th>
           </tr>
         </thead>
-        <tbody id="memberBody"><tr><td colspan="11" class="loading">명단을 불러오는 중...</td></tr></tbody>
+        <tbody id="memberBody"><tr><td colspan="12" class="loading">명단을 불러오는 중...</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -1036,7 +1038,7 @@ async function startApp() {
   try {
     showGlobalError('');
     document.getElementById('memberBody').innerHTML =
-      '<tr><td colspan="11" class="loading"><span class="spinner"></span>GitHub에서 명단을 불러오는 중...</td></tr>';
+      '<tr><td colspan="12" class="loading"><span class="spinner"></span>GitHub에서 명단을 불러오는 중...</td></tr>';
 
     const mv = await ghLoadVerified('data/members.json');   // 내용과 버전이 같은 시점 것인지 확인해서 읽음 (저장 때 비교용)
     if (mv.text === null) throw new Error('GitHub 읽기 실패 (404): data/members.json');
@@ -1052,7 +1054,7 @@ async function startApp() {
     await loadRosterState();    // 연명부 작업 기록(폴더·잠금·출력 완료)을 저장소에서 불러옴
   } catch (err) {
     showGlobalError(err.message + '\n\n(저장소에 data/members.json 파일이 있는지, 토큰 권한이 맞는지 확인해 주세요.)');
-    document.getElementById('memberBody').innerHTML = '<tr><td colspan="11" class="loading">불러오기 실패</td></tr>';
+    document.getElementById('memberBody').innerHTML = '<tr><td colspan="12" class="loading">불러오기 실패</td></tr>';
   }
 }
 
@@ -1139,7 +1141,7 @@ function filteredMembers() {
   return allMembers.filter(function (m) {
     if (errorOnly && !errorOnly[m.id]) return false;
     if (q && String(m['성명']).indexOf(q) === -1 && String(m['사번']).toLowerCase().indexOf(qLower) === -1 &&
-        String(m['부서']).indexOf(q) === -1 && String(m['과']).indexOf(q) === -1) return false;
+        String(m['부서']).indexOf(q) === -1 && String(m['과']).indexOf(q) === -1 && String(m['팀'] || '').indexOf(q) === -1) return false;
     for (const f of FILTER_FIELDS) {
       if (filters[f] && String(m[f]) !== filters[f]) return false;
     }
@@ -1150,12 +1152,13 @@ function filteredMembers() {
 function forceShowAll() { showAllForced = true; renderMembers(); }
 
 function renderMembers() {
+  applyRosterTeamColumn();
   const body = document.getElementById('memberBody');
   const info = document.getElementById('listInfo');
 
   if (!hasActiveFilter() && !showAllForced) {
     body.innerHTML =
-      '<tr><td colspan="11"><div class="hint-box">전체 ' + allMembers.length + '명입니다. ' +
+      '<tr><td colspan="12"><div class="hint-box">전체 ' + allMembers.length + '명입니다. ' +
       '검색어를 입력하거나 위 필터를 선택해 인원을 좁혀보세요.<br>' +
       '(전체 인원을 다 보시려면 "전체 인원 표시" 버튼을 눌러주세요.)</div></td></tr>';
     if (info) info.textContent = '';
@@ -1166,7 +1169,7 @@ function renderMembers() {
   const list = filteredMembers();
   if (info) info.textContent = '조건에 맞는 인원 ' + list.length + '명';
   if (list.length === 0) {
-    body.innerHTML = '<tr><td colspan="11" class="loading">조건에 맞는 조합원이 없습니다.</td></tr>';
+    body.innerHTML = '<tr><td colspan="12" class="loading">조건에 맞는 조합원이 없습니다.</td></tr>';
     updateSelCount();
     return;
   }
@@ -1192,6 +1195,7 @@ function renderMembers() {
       '<td>' + escapeHtml(m['사업본부']) + '</td>' +
       '<td>' + escapeHtml(m['부서']) + '</td>' +
       '<td>' + escapeHtml(m['과']) + '</td>' +
+      '<td class="col-team">' + escapeHtml(m['팀'] || '') + '</td>' +
       '<td>' + escapeHtml(m['직위']) + '</td>' +
       '<td>' + escapeHtml(m['사번']) + '</td>' +
       '<td>' + escapeHtml(m['근무지']) + '</td>' +
@@ -1202,7 +1206,7 @@ function renderMembers() {
     );
   }
   if (list.length > shown) {
-    rows.push('<tr><td colspan="11"><div class="hint-box">화면에는 ' + shown + '명만 그렸습니다 (나머지 ' + (list.length - shown) + '명). ' +
+    rows.push('<tr><td colspan="12"><div class="hint-box">화면에는 ' + shown + '명만 그렸습니다 (나머지 ' + (list.length - shown) + '명). ' +
       '<b>"보이는 인원 전체선택"과 연명부 생성은 조건에 맞는 ' + list.length + '명 전부에 적용됩니다.</b><br><br>' +
       '<button type="button" class="secondary" onclick="showMoreRows(false)">더 보기 (+' + RENDER_STEP + '명)</button> ' +
       '<button type="button" class="secondary" onclick="showMoreRows(true)">전부 보기</button></div></td></tr>');
@@ -1224,6 +1228,7 @@ function namesPreview(list, label, max) {
 function planUpload(uploadedRows, current, mode) {
   const blockers = [];
   const idCount = {};
+  const upHasTeam = uploadedRows.some(function (u) { return Object.prototype.hasOwnProperty.call(u, '팀'); });   // 올린 파일에 "팀" 열이 있는지
   const noId = [], noDistrict = [], badDistrict = [], noLocation = [], noDept = [];
   uploadedRows.forEach(function (u) {
     if (!u['사번']) { noId.push(u); return; }
@@ -1247,6 +1252,8 @@ function planUpload(uploadedRows, current, mode) {
   if (noLocation.length > 0) blockers.push('⑤ 투표장소가 비어있는 사람이 ' + noLocation.length + '명 있습니다' + (noLocation.length === uploadedRows.length ? ' (파일 전체가 비어 있습니다 — 투표장소 열의 값이 빠진 파일인지 확인해 주세요)' : '') + ': ' + namesPreview(noLocation, function (u) { return u['성명'] + '/' + u['투표구'] + '투표구'; }) + '\n   ※ 투표장소가 비면 기존 사람의 투표장소도 지워지고, 연명부에서 제외됩니다.');
   if (noDept.length > 0) blockers.push('⑥ 부서가 비어있는 사람이 ' + noDept.length + '명 있습니다: ' + namesPreview(noDept, function (u) { return u['성명']; }));
 
+  if (mode === 'replace' && !upHasTeam && current.some(function (m) { return m['팀']; })) blockers.push('⑦ 올린 파일에 "팀" 열이 없습니다. 지금 명단에는 팀 정보가 ' + current.filter(function (m) { return m['팀']; }).length + '명 있어서, 이 파일로 전체 교체하면 팀이 모두 지워집니다. 엑셀에 "팀" 열을 추가해서 다시 올리거나 "합치기"로 올려 주세요.');
+  const diffFields = DIFF_FIELDS.concat(upHasTeam ? ['팀'] : []);
   const byId = {};
   current.forEach(function (m) { if (m['사번']) byId[m['사번']] = m; });
   const upById = {};
@@ -1257,7 +1264,7 @@ function planUpload(uploadedRows, current, mode) {
   uploadedRows.forEach(function (u) {
     const e = u['사번'] && byId[u['사번']];
     if (!e) return;
-    const diffs = DIFF_FIELDS.filter(function (f) { return String(e[f] || '') !== String(u[f] || ''); });
+    const diffs = diffFields.filter(function (f) { return String(e[f] || '') !== String(u[f] || ''); });
     if (diffs.length > 0) changed.push({ u: u, e: e, diffs: diffs });
   });
   const removed = mode === 'replace' ? current.filter(function (m) { return m['사번'] && !upById[m['사번']]; }) : [];
@@ -1274,6 +1281,7 @@ function planUpload(uploadedRows, current, mode) {
   lines.push('· 정보가 바뀌는 사람: ' + changed.length + '명' + (changed.length ? '\n   ' + changed.slice(0, 8).map(function (c) {
     return c.u['성명'] + ': ' + c.diffs.map(function (f) { return f + ' ' + (c.e[f] || '(빈칸)') + '→' + (c.u[f] || '(빈칸)'); }).join(', ');
   }).join('\n   ') + (changed.length > 8 ? '\n   … 외 ' + (changed.length - 8) + '명' : '') : ''));
+  if (upHasTeam) lines.push('· 올린 파일에 "팀" 열이 있습니다 (팀 값이 있는 사람 ' + uploadedRows.filter(function (u) { return u['팀']; }).length + '명)');
   lines.push('· 사번 중복: 0건 / 사번·투표구·투표장소·부서 빈칸: 0명');
 
   return {
@@ -1292,7 +1300,7 @@ function planUpload(uploadedRows, current, mode) {
       let nextId = copy.reduce(function (mx, m) { return Math.max(mx, m.id || 0); }, 0) + 1;
       uploadedRows.forEach(function (u) {
         const e = idx[u['사번']];
-        if (e) { FIELDS.forEach(function (f) { e[f] = u[f]; }); }
+        if (e) { FIELDS.forEach(function (f) { e[f] = u[f]; }); if (upHasTeam) e['팀'] = u['팀']; }   // 파일에 팀 열이 없으면 기존 팀은 그대로
         else { const o = Object.assign({}, u); o.id = nextId++; copy.push(o); idx[o['사번']] = o; }
       });
       return copy;
@@ -1598,17 +1606,29 @@ async function readLedgerRemote() {
 }
 
 // 폴더 안 사람 순서: 같은 과끼리 모으고, 과는 번호·이름 순(01조→02조…, 가나다) 또는 명단에 있는 순서, 과 안에서는 이름순. 과가 비면 맨 뒤
+// 폴더 안 사람 순서. 조직 순서 = 사업본부 → 부서 → 과 → 팀 → 이름 (각 단계는 번호·이름 순, 또는 명단에 있는 순서). 값이 비면 그 단계에서 맨 뒤
+// "과별" 방식은 과 → 팀 → 이름 (부서별 묶음 전용: 사업본부·부서는 폴더 안에서 같음)
+const ORG_LEVELS = ['사업본부', '부서', '과', '팀'];
+function orgPathKey(m, upto) { let k = ''; for (let i = 0; i <= upto; i++) k += '\u0001' + (m[ORG_LEVELS[i]] || ''); return k; }
+let ORG_RANK = {};   // 명단에 처음 나온 순서 (조직 순서 "명단 순서"용)
+const COLL_NUM = new Intl.Collator('ko', { numeric: true }), COLL_KO = new Intl.Collator('ko');   // 한글 비교기는 한 번만 만들어 재사용 (정렬이 빨라짐)
+let VAL_RANK = [{}, {}, {}, {}];   // 단계별 값의 번호·이름 순서를 미리 계산해 둔 표: VAL_RANK[단계][값] = 순번 (정렬 때 숫자로만 비교)
+function buildValRank() {
+  const uniq = [new Set(), new Set(), new Set(), new Set()];
+  allMembers.forEach(function (m) { for (let l = 0; l < 4; l++) { const v = m[ORG_LEVELS[l]]; if (v) uniq[l].add(String(v)); } });
+  VAL_RANK = uniq.map(function (set) { const o = {}; Array.from(set).sort(function (x, y) { const c = COLL_NUM.compare(x, y); return c !== 0 ? c : (x < y ? -1 : 1); }).forEach(function (v, i) { o[v] = i; }); return o; });   // "01조"와 "1조"처럼 번호가 같아도 글자로 구분
+}
 function orderFolderMembers(list, rank) {
-  const mode = ROSTER_OPTS.sort;
+  const mode = ROSTER_OPTS.sort, byList = mode === 'orglist' || mode === 'gwalist', from = (mode === 'org' || mode === 'orglist') ? 0 : 2;
+  const level = function (a, b, i) {
+    const x = String(a[ORG_LEVELS[i]] || ''), y = String(b[ORG_LEVELS[i]] || '');
+    if (x === y) return 0; if (!x) return 1; if (!y) return -1;
+    if (byList) { const ra = rank[i + orgPathKey(a, i)], rb = rank[i + orgPathKey(b, i)]; if (ra !== rb) return ra - rb; }
+    return VAL_RANK[i][x] - VAL_RANK[i][y];
+  };
   return list.slice().sort(function (a, b) {
-    const ga = String(a['과'] || ''), gb = String(b['과'] || '');
-    if (ga !== gb) {
-      if (!ga) return 1; if (!gb) return -1;
-      if (mode === 'gwalist') { const ra = rank[(a['부서'] || '') + '\u0001' + ga], rb = rank[(b['부서'] || '') + '\u0001' + gb]; if (ra !== rb) return ra - rb; }
-      const c = ga.localeCompare(gb, 'ko', { numeric: true });   // 번호·이름 순 (01조 → 02조 … 10조)
-      return c !== 0 ? c : (ga < gb ? -1 : 1);                    // "01조"와 "1조"처럼 번호가 같으면 글자 순으로 정해, 서로 다른 과가 섞이지 않게 함
-    }
-    return String(a['성명'] || '').localeCompare(String(b['성명'] || ''), 'ko') || String(a['사번'] || '').localeCompare(String(b['사번'] || ''));
+    for (let i = from; i < 4; i++) { const c = level(a, b, i); if (c) return c; }
+    return COLL_KO.compare(String(a['성명'] || ''), String(b['성명'] || '')) || (String(a['사번'] || '') < String(b['사번'] || '') ? -1 : 1);
   });
 }
 // ----- 기록을 합쳐서 화면용 묶음·잠금·출력 완료 계산 -----
@@ -1647,9 +1667,12 @@ function recomputeRosterView() {
     });
   });
   order.forEach(function (b) { delete b._seen; Object.keys(b.printed).forEach(function (k) { if (!b.groups[k]) { delete b.printed[k]; delete b.printedBy[k]; } }); });
-  if (ROSTER_OPTS.sort !== 'keep') {   // 부서별 폴더 안에서 같은 과끼리 모아서 보여 줌 (화면·인쇄·엑셀 모두 이 순서를 씀. 저장된 기록은 그대로)
-    const rank = {}; allMembers.forEach(function (m, i) { const kk = (m['부서'] || '') + '\u0001' + (m['과'] || ''); if (rank[kk] === undefined) rank[kk] = i; });
-    order.forEach(function (b) { if (b.groupBy === '부서') Object.keys(b.groups).forEach(function (k) { b.groups[k] = orderFolderMembers(b.groups[k], rank); }); });
+  if (ROSTER_OPTS.sort !== 'keep') {   // 폴더 안 사람 순서 (화면·인쇄·엑셀 모두 이 순서를 씀. 저장된 기록은 그대로)
+    const isOrg = ROSTER_OPTS.sort === 'org' || ROSTER_OPTS.sort === 'orglist', rank = {};
+    if (ROSTER_OPTS.sort === 'orglist' || ROSTER_OPTS.sort === 'gwalist') allMembers.forEach(function (m, i) { for (let l = 0; l < 4; l++) { const k = l + orgPathKey(m, l); if (rank[k] === undefined) rank[k] = i; } });
+    ORG_RANK = rank;
+    buildValRank();   // 단계별 값의 순서표 (명단 순서 방식에서도 같은 값에는 같은 순번을 쓰기 위해 항상 만들어 둠)
+    order.forEach(function (b) { if (b.groupBy === '부서' || isOrg) Object.keys(b.groups).forEach(function (k) { b.groups[k] = orderFolderMembers(b.groups[k], rank); }); });
   }
   rosterBatches = order.filter(function (b) { return Object.keys(b.groups).length > 0; });
   lockedEmpids = locked; rosterArchived = archived; rosterArchivedBy = archivedBy; rosterChangedMembers = changed;
@@ -1678,6 +1701,7 @@ function confirmPrintUnsaved(batches) {
     '\n\n저장 전에는 다른 관리자가 같은 사람을 이미 연명부에 넣었는지 확인되지 않아서, 이대로 인쇄·엑셀로 내면 중복될 수 있습니다.\n"💾 지금 저장"으로 저장을 끝낸 뒤 하시길 권합니다.\n\n그래도 계속할까요?');
 }
 function rosterRefreshAll() {
+  applyRosterTeamColumn();
   recomputeRosterView();
   pruneSelectionByLocks();
   closeStaleModals();
@@ -2417,10 +2441,16 @@ function changeBatchPage(delta) {
 
 // 묶음 안의 폴더 정렬: 투표구 번호 순 → 같은 투표구 안에서는 부서명 순 (부서별로 만들어도 투표구가 섞이지 않게)
 function sortedGroupKeys(batch) {
+  const org = ROSTER_OPTS.sort === 'org' || ROSTER_OPTS.sort === 'orglist', byList = ROSTER_OPTS.sort === 'orglist';
+  const buOf = function (k) { const g = batch.groups[k]; return g && g[0] ? String(g[0]['사업본부'] || '') : ''; };
   return Object.keys(batch.groups).sort(function (a, b) {
     const ma = batch.groupMeta[a], mb = batch.groupMeta[b];
     const d = String(ma.district || '').localeCompare(String(mb.district || ''), 'ko', { numeric: true });
     if (d !== 0) return d;
+    if (org && batch.groupBy === '부서') {   // 같은 투표구 안에서는 사업본부 → 부서 순
+      const x = buOf(a), y = buOf(b);
+      if (x !== y) { if (!x) return 1; if (!y) return -1; if (byList && ORG_RANK['0\u0001' + x] !== ORG_RANK['0\u0001' + y]) return ORG_RANK['0\u0001' + x] - ORG_RANK['0\u0001' + y]; const c = x.localeCompare(y, 'ko', { numeric: true }); if (c !== 0) return c; }
+    }
     return String(ma.dept || ma.label).localeCompare(String(mb.dept || mb.label), 'ko', { numeric: true });
   });
 }
@@ -2486,6 +2516,7 @@ function renderRosterFolders(autoOpen) {
 }
 
 function openRosterModal(batchId, key) {
+  applyRosterTeamColumn();
   const batch = rosterBatches.find(function (b) { return b.id === batchId; });
   if (!batch) return;
   currentOpenBatchId = batchId;
@@ -2512,6 +2543,7 @@ function closeRosterModal() {
 /* ===================== 전체 인쇄 보기 (만들어둔 모든 묶음·폴더를 한 번에, 하나마다 새 페이지) ===================== */
 // 작은 부서 표 하나(제목+머리글+사람 줄). 번호는 1부터. 한 장에 여러 개를 모을 때 씀
 function rosterTableOnlyHtml(title, members) {
+  applyRosterTeamColumn();
   const total = ROSTER_COL_WIDTHS.reduce(function (a, b) { return a + b; }, 0);
   const cols = ROSTER_COL_WIDTHS.map(function (w) { return '<col style="width:' + (w / total * 100).toFixed(3) + '%">'; }).join('');
   const head = ROSTER_HEADERS.map(function (h) { return '<th>' + h + '</th>'; }).join('');
@@ -2520,6 +2552,7 @@ function rosterTableOnlyHtml(title, members) {
 }
 // 작은 부서 여러 개를 한 표로: 제목·머리글은 한 번, 번호는 이어서, 부서가 바뀌는 첫 줄에 굵은 선(dept-start)
 function rosterMergedTableHtml(title, lists) {
+  applyRosterTeamColumn();
   const total = ROSTER_COL_WIDTHS.reduce(function (a, b) { return a + b; }, 0);
   const cols = ROSTER_COL_WIDTHS.map(function (w) { return '<col style="width:' + (w / total * 100).toFixed(3) + '%">'; }).join('');
   const head = ROSTER_HEADERS.map(function (h) { return '<th>' + h + '</th>'; }).join('');
@@ -2561,6 +2594,7 @@ function renderFlowSections(allGroups, content) {
   return { pages: pages, packedFolders: 0, packPages: 0, flow: true, people: idx };
 }
 function rosterFlowTableHtml(title, chunk, startIdx) {
+  applyRosterTeamColumn();
   const total = ROSTER_COL_WIDTHS.reduce(function (a, b) { return a + b; }, 0);
   const cols = ROSTER_COL_WIDTHS.map(function (w) { return '<col style="width:' + (w / total * 100).toFixed(3) + '%">'; }).join('');
   const head = ROSTER_HEADERS.map(function (h) { return '<th>' + h + '</th>'; }).join('');
@@ -2626,6 +2660,7 @@ function renderPrintAllSections(allGroups, content) {
 }
 
 function openPrintAllModal(batchId, onlyKeys) {   // onlyKeys: 골라서 인쇄할 폴더 키 목록(없으면 전부)
+  applyRosterTeamColumn();
   lastPrintAllBatchId = batchId; lastPrintAllKeys = onlyKeys && onlyKeys.length ? onlyKeys.slice() : null;
   document.getElementById('rosterModalBackdrop').style.display = 'none';   // 다른 팝업이 같이 인쇄되지 않게 닫음
   const batches = batchId ? rosterBatches.filter(function (b) { return b.id === batchId; }) : rosterBatches;
@@ -2675,23 +2710,40 @@ const ROSTER_COLS = [
   { h: 'NO.', w: 4.5 }, { h: '투표구', w: 7.5 }, { h: '사업본부', w: 20.625 }, { h: '부서', w: 20.625 }, { h: '과', w: 20.625 },
   { h: '직위', w: 13.625 }, { h: '사번', w: 13.625 }, { h: '성명', w: 10.75 }, { h: '투표장소', w: 25.625 }, { h: '서명', w: 20.625 }
 ];
+const ROSTER_COLS_BASE = ROSTER_COLS.slice();                       // 팀이 없을 때의 열 (예시.xlsx 그대로)
+const ROSTER_COL_TEAM = { h: '팀', w: 14 };                         // 팀이 있으면 "과" 다음에 들어감
 const ROSTER_HEADERS = ROSTER_COLS.map(function (c) { return c.h; });
 const ROSTER_COL_WIDTHS = ROSTER_COLS.map(function (c) { return c.w; });
-const ROSTER_LAST_COL = String.fromCharCode(64 + ROSTER_HEADERS.length);
+function rosterLastCol() { return String.fromCharCode(64 + ROSTER_HEADERS.length); }
+let teamCache = { ref: null, n: -1, v: false };
+function hasTeamData(list) {   // 명단에 팀 값이 하나라도 있으면 true (같은 명단이면 다시 세지 않음)
+  if (list) { for (let i = 0; i < list.length; i++) if (list[i]['팀']) return true; return false; }
+  if (teamCache.ref === allMembers && teamCache.n === allMembers.length) return teamCache.v;
+  teamCache = { ref: allMembers, n: allMembers.length, v: hasTeamData(allMembers) }; return teamCache.v;
+}
+function applyRosterTeamColumn() {   // 팀 값이 있으면 화면 표와 연명부(인쇄·엑셀)에 팀 열을 넣고, 없으면 예전 모양 그대로
+  const on = hasTeamData();
+  if (document.body) document.body.classList.toggle('has-team', on);
+  if ((ROSTER_HEADERS.indexOf('팀') >= 0) === on) return;
+  const cols = ROSTER_COLS_BASE.slice(); if (on) cols.splice(cols.findIndex(function (c) { return c.h === '과'; }) + 1, 0, ROSTER_COL_TEAM);
+  ROSTER_COLS.length = 0; ROSTER_HEADERS.length = 0; ROSTER_COL_WIDTHS.length = 0;
+  cols.forEach(function (c) { ROSTER_COLS.push(c); ROSTER_HEADERS.push(c.h); ROSTER_COL_WIDTHS.push(c.w); });
+}
+function exportFields() { const f = FIELDS.slice(); if (hasTeamData()) f.splice(f.indexOf('과') + 1, 0, '팀'); return f; }   // 명단 내려받기(업로드 양식)의 열
 // 용지: A3가 기준 모양. A4는 같은 모양을 약 70%로 줄여서 같은 30명 단위로 인쇄
 const PAPERS = { A3: { excel: 8, scale: 100, zoom: 1, margin: '6mm 0 7mm 0' }, A4: { excel: 9, scale: 70, zoom: 0.70, margin: '4mm 0 4mm 0' } };
 const ROSTER_FIELD = {
   'NO.': function (m, i) { return i + 1; }, '투표구': function (m) { return m['투표구'] || ''; },
   '사업본부': function (m) { return m['사업본부'] || ''; }, '부서': function (m) { return m['부서'] || ''; },
-  '과': function (m) { return m['과'] || ''; }, '직위': function (m) { return m['직위'] || ''; },
+  '과': function (m) { return m['과'] || ''; }, '팀': function (m) { return m['팀'] || ''; }, '직위': function (m) { return m['직위'] || ''; },
   '사번': function (m) { return m['사번'] || ''; }, '성명': function (m) { return m['성명'] || ''; },
   '투표장소': function (m) { return m['투표장소'] || ''; }, '서명': function () { return ''; }
 };
 function clampPackMax(v) { v = parseInt(v, 10); return isFinite(v) ? Math.min(29, Math.max(1, v)) : 10; }
-let ROSTER_OPTS = { paper: 'A3', pack: true, packMax: 10, sep: 'line', sort: 'gwaname', packStyle: 'once', flow: true };   // flow: 선택한 폴더는 부서 경계 없이 이어서 인쇄   // packStyle: 'once' 모은 장에 제목 한 번·번호 이어서 / 'each' 부서마다 따로(잘라서 쓰기)   // sort: 'gwaname' 과별(번호·이름순) / 'gwalist' 과별(명단 순서) / 'keep' 만든 순서(예전)   // sep: 'line' 점선(✂) / 'gap' 간격만   // pack: 작은 부서를 한 장에 모아 인쇄(점선 구분) / packMax: 몇 명 이하를 작은 부서로 볼지
+let ROSTER_OPTS = { paper: 'A3', pack: true, packMax: 10, sep: 'line', sort: 'org', packStyle: 'once', flow: true };   // flow: 선택한 폴더는 부서 경계 없이 이어서 인쇄   // packStyle: 'once' 모은 장에 제목 한 번·번호 이어서 / 'each' 부서마다 따로(잘라서 쓰기)   // sort: 'gwaname' 과별(번호·이름순) / 'gwalist' 과별(명단 순서) / 'keep' 만든 순서(예전)   // sep: 'line' 점선(✂) / 'gap' 간격만   // pack: 작은 부서를 한 장에 모아 인쇄(점선 구분) / packMax: 몇 명 이하를 작은 부서로 볼지
 try {
   const saved = JSON.parse(localStorage.getItem('vote_roster_print_opts_v3') || 'null');
-  if (saved && PAPERS[saved.paper]) ROSTER_OPTS = { paper: saved.paper, pack: saved.pack !== false, packMax: clampPackMax(saved.packMax), sep: saved.sep === 'gap' ? 'gap' : 'line', sort: ['gwaname', 'gwalist', 'keep'].indexOf(saved.sort) >= 0 ? saved.sort : 'gwaname', packStyle: saved.packStyle === 'each' ? 'each' : 'once', flow: saved.flow !== false };
+  if (saved && PAPERS[saved.paper]) ROSTER_OPTS = { paper: saved.paper, pack: saved.pack !== false, packMax: clampPackMax(saved.packMax), sep: saved.sep === 'gap' ? 'gap' : 'line', sort: ['org', 'orglist', 'gwaname', 'gwalist', 'keep'].indexOf(saved.sort) >= 0 ? saved.sort : 'org', packStyle: saved.packStyle === 'each' ? 'each' : 'once', flow: saved.flow !== false };
 } catch (e) { /* 저장된 설정을 못 읽으면 기본값(A3) */ }
 
 // 선택한 용지를 인쇄 설정(@page)에 반영
@@ -2711,7 +2763,7 @@ function renderPrintOptions() {
   document.querySelectorAll('.print-options').forEach(function (el) {
     el.innerHTML = '<label style="font-size:13px;">용지 <select class="po-paper" onchange="onPrintOptionChange(this)">' +
       '<option value="A3">A3 가로 (기본)</option><option value="A4">A4 가로 (70%로 축소)</option></select></label>' +
-      ' <label style="font-size:13px; margin-left:14px;">부서 안 정렬 <select class="po-sort" onchange="onPrintOptionChange(this)"><option value="gwaname">과별로 모아서 (번호·이름 순)</option><option value="gwalist">과별로 모아서 (명단 순서)</option><option value="keep">만든 순서 (예전 방식)</option></select></label>' +
+      ' <label style="font-size:13px; margin-left:14px;">부서 안 정렬 <select class="po-sort" onchange="onPrintOptionChange(this)"><option value="org">조직 순서: 사업본부 → 부서 → 과 → 팀 (번호·이름 순)</option><option value="orglist">조직 순서: 사업본부 → 부서 → 과 → 팀 (명단에 있는 순서)</option><option value="gwaname">과별로 모아서 (번호·이름 순)</option><option value="gwalist">과별로 모아서 (명단 순서)</option><option value="keep">만든 순서 (예전 방식)</option></select></label>' +
       (el.closest('#printAllModalBackdrop') ? ' <label style="font-size:13px; margin-left:14px;"><input type="checkbox" class="po-flow" onchange="onPrintOptionChange(this)"> 선택 인쇄는 이어서 (제목 한 번·번호 이어서)</label> <label style="font-size:13px; margin-left:14px;"><input type="checkbox" class="po-pack" onchange="onPrintOptionChange(this)"> 작은 부서는 한 장에 모아 인쇄 (점선으로 구분)</label>' +
         ' <label style="font-size:13px;"><input type="number" class="po-packmax" min="1" max="29" style="width:52px;" onchange="onPrintOptionChange(this)"> 명 이하</label>' +
         ' <label style="font-size:13px; margin-left:8px;">모은 장 <select class="po-pstyle" onchange="onPrintOptionChange(this)"><option value="once">제목 한 번 · 번호 이어서</option><option value="each">부서마다 따로 (잘라서 쓰기)</option></select></label>' +
@@ -2755,6 +2807,7 @@ function rosterCells(m, idx) {
 }
 
 function buildRosterTableHtml(title, members) {
+  applyRosterTeamColumn();
   const total = ROSTER_COL_WIDTHS.reduce(function (a, b) { return a + b; }, 0);
   const cols = ROSTER_COL_WIDTHS.map(function (w) { return '<col style="width:' + (w / total * 100).toFixed(3) + '%">'; }).join('');
   const head = ROSTER_HEADERS.map(function (h) { return '<th>' + h + '</th>'; }).join('');
@@ -2842,6 +2895,7 @@ function triggerDownload(blob, filename) {
 // 못 불러왔으면 서식 없는 기본 엑셀로 저장
 // 한 장(시트)을 "진짜_최종.xlsx" 서식으로 채움
 function addRosterSheet(wb, sheetName, title, members) {
+  applyRosterTeamColumn();
   const paper = PAPERS[ROSTER_OPTS.paper];
   // 열 너비: 예시 비율 그대로 A3 가로 폭에 꽉 차게 (A3 기준 설계. A4는 인쇄 배율 70%)
   const totalW = ROSTER_COL_WIDTHS.reduce(function (a, b) { return a + b; }, 0);
@@ -2866,7 +2920,7 @@ function addRosterSheet(wb, sheetName, title, members) {
   };
 
   // 제목: 두 줄을 합쳐서 가운데 (HY견고딕 18pt)
-  ws.mergeCells('A1:' + ROSTER_LAST_COL + '2');
+  ws.mergeCells('A1:' + rosterLastCol() + '2');
   const t = ws.getCell('A1');
   t.value = title;
   t.font = { name: 'HY견고딕', size: ROSTER_TITLE_PT };
@@ -2907,7 +2961,7 @@ function addRosterSheet(wb, sheetName, title, members) {
   });
   // 30명마다 쪽 나눔 (제목·머리글은 쪽마다 반복)
   for (let k = 1; k * PAGE_ROWS < members.length; k++) ws.getRow(3 + k * PAGE_ROWS).addPageBreak();
-  if (members.length > 0) ws.autoFilter = 'A3:' + ROSTER_LAST_COL + (3 + members.length);
+  if (members.length > 0) ws.autoFilter = 'A3:' + rosterLastCol() + (3 + members.length);
   return ws;
 }
 
@@ -2954,6 +3008,7 @@ async function saveRosterXlsx(filename, title, members) {
 
 // 전체 엑셀: 폴더 하나당 시트 한 장, 파일 하나. (묶음을 지정하면 그 묶음만, 아니면 모든 묶음)
 async function downloadAllExcel(batchId) {
+  applyRosterTeamColumn();
   const batches = batchId ? rosterBatches.filter(function (b) { return b.id === batchId; }) : rosterBatches;
   if (!confirmPrintUnsaved(batches)) return;
   const sheets = [];
@@ -3132,6 +3187,7 @@ async function handleExcelUpload() {
       FIELDS.forEach(function (f) {
         obj[f] = colIndex[f] !== undefined ? String(row[colIndex[f]] || '').trim() : '';
       });
+      if (colIndex['팀'] !== undefined) obj['팀'] = String(row[colIndex['팀']] || '').trim();   // 팀 열은 선택 사항: 있을 때만
       uploadedRows.push(obj);
     }
 
@@ -3234,7 +3290,7 @@ async function getVersionInfo(sha) {
     arr: arr, count: arr.length, dup: dup, noEmp: noEmp,
     revived: Object.keys(old).filter(function (k) { return !cur[k]; }).length,
     gone: Object.keys(cur).filter(function (k) { return !old[k]; }).length,
-    changed: Object.keys(old).filter(function (k) { return cur[k] && DIFF_FIELDS.some(function (f) { return String(cur[k][f] || '') !== String(old[k][f] || ''); }); }).length
+    changed: Object.keys(old).filter(function (k) { return cur[k] && DIFF_FIELDS.concat(['팀']).some(function (f) { return String(cur[k][f] || '') !== String(old[k][f] || ''); }); }).length
   };
 }
 function versionSummary(info, label) {
@@ -3270,8 +3326,8 @@ async function restoreVersion(sha) {
 
 // 현재 명단을 업로드 양식(헤더 10개)과 같은 엑셀로 저장 — 이 파일을 "전체 교체"로 다시 올리면 그대로 복원됨
 function downloadMembersBackupExcel(list, tag) {
-  const data = list.map(function (m) { const o = {}; FIELDS.forEach(function (f) { o[f] = m[f]; }); return o; });
-  const ws = XLSX.utils.json_to_sheet(data, { header: FIELDS });
+  const EF = exportFields(), data = list.map(function (m) { const o = {}; EF.forEach(function (f) { o[f] = m[f] || ''; }); return o; });
+  const ws = XLSX.utils.json_to_sheet(data, { header: EF });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '명단');
   const d = new Date(), pad = function (n) { return String(n).padStart(2, '0'); };
@@ -3282,10 +3338,10 @@ function downloadFilteredExcel() {
   const list = (hasActiveFilter() || showAllForced) ? filteredMembers() : allMembers;
   const data = list.map(function (m) {
     const obj = {};
-    FIELDS.forEach(function (f) { obj[f] = m[f]; });
+    exportFields().forEach(function (f) { obj[f] = m[f] || ''; });
     return obj;
   });
-  const ws = XLSX.utils.json_to_sheet(data, { header: FIELDS });
+  const ws = XLSX.utils.json_to_sheet(data, { header: exportFields() });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '명단');
   XLSX.writeFile(wb, '조합원명단_' + new Date().toISOString().slice(0,10) + '.xlsx');
